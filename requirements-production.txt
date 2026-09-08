@@ -1,0 +1,13 @@
+# Production agent orchestration
+langchain>=0.3.0
+langgraph>=0.2.0
+langchain-nvidia-ai-endpoints>=0.3.0
+
+# Optional NeMo Guardrails Python runtime
+nemoguardrails>=0.12.0
+
+# NVIDIA cuOpt is normally deployed as a service/container.
+# Install the version matching your CUDA and cuOpt deployment separately.
+
+# Optional observability/evaluation integrations
+# langsmith>=0.1.0

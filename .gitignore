@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Runtime artifacts
+results/*.json
+approvals.json
+
+# macOS
+.DS_Store
