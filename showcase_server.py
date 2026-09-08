@@ -14,6 +14,12 @@ ROOT = Path(__file__).parent
 CONTROLLER: ShowcaseController | None = None
 
 
+class Scenario(ShowcaseController):
+    """Backward-compatible scenario facade used by the regression tests."""
+
+    pass
+
+
 class ShowcaseHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, directory=str(ROOT / "showcase"), **kwargs)

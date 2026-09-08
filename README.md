@@ -21,7 +21,7 @@ The local UI uses clearly labeled **Scenario Replay** data. It does not mock NVI
 WMS / ERP / Forecast APIs
     -> LangGraph DeepAgent
     -> Nemotron through NVIDIA NIM
-    -> NeMo Retriever + specialist agents
+    -> specialist agents
     -> NVIDIA cuOpt constrained solver
     -> NeMo Guardrails + OpenShell policy
     -> regression and constraint harness
@@ -37,7 +37,7 @@ WMS / ERP / Forecast APIs
 - `services/config.py`: Environment-driven production configuration
 - `services/http_client.py`: Shared authenticated JSON HTTP transport
 - `services/enterprise.py`: WMS, ERP, and forecasting adapters
-- `services/nvidia.py`: NIM, NeMo Retriever, cuOpt, and Guardrails clients
+- `services/nvidia.py`: NIM, cuOpt, and Guardrails clients
 - `tools/evaluation.py`: Agent quality, latency, errors, and trace recording
 - `tools/evaluation_suite.py`: Evaluation entry point for all agents
 - `tools/governance.py`: OpenShell-style permissions and human approvals
@@ -54,7 +54,7 @@ WMS / ERP / Forecast APIs
 WMS / ERP / Forecast APIs
     -> LangGraph DeepAgent
     -> Nemotron through NIM
-    -> NeMo Retriever + specialist agents
+    -> specialist agents
     -> cuOpt constrained solver
     -> NeMo Guardrails + OpenShell policy
     -> regression and constraint harness
@@ -71,11 +71,11 @@ Run the offline governance checks with:
 python -m unittest discover -s tests -v
 ```
 
-The integration modules use standard-library HTTP clients so the service boundaries can be tested without exposing credentials or requiring a network connection. Actual NIM, NeMo Retriever, cuOpt, Guardrails, OpenShell, and WMS services must be deployed and configured separately.
+The integration modules use standard-library HTTP clients so the service boundaries can be tested without exposing credentials or requiring a network connection. Actual NIM, cuOpt, Guardrails, OpenShell, and WMS services must be deployed and configured separately.
 
 ### Synthetic Enterprise Service Mock
 
-`mocks/enterprise_services.py` provides a local HTTP gateway for development and demonstrations. It generates deterministic synthetic WMS, ERP, inventory, forecast, and inbound data only. NVIDIA NIM, NeMo Retriever, Guardrails, OpenShell, and cuOpt are never mocked; configure their real service URLs and credentials in the environment.
+`mocks/enterprise_services.py` provides a local HTTP gateway for development and demonstrations. It generates deterministic synthetic WMS, ERP, inventory, forecast, and inbound data only. NVIDIA NIM, Guardrails, OpenShell, and cuOpt are never mocked; configure their real service URLs and credentials in the environment.
 
 Start it in one terminal:
 
@@ -90,7 +90,7 @@ export WMS_URL=http://127.0.0.1:9100
 export ERP_URL=http://127.0.0.1:9100
 export FORECAST_URL=http://127.0.0.1:9100
 export APPROVAL_STORE=results/approvals.json
-# Set NIM_BASE_URL, NEMO_RETRIEVER_URL, CUOPT_URL, NEMO_GUARDRAILS_URL, and
+# Set NIM_BASE_URL, CUOPT_URL, NEMO_GUARDRAILS_URL, and
 # OPENSHELL_URL to your actual NVIDIA and cuOpt service endpoints.
 python production_main.py --actor planner-service
 ```
