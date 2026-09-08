@@ -6,6 +6,7 @@ import json
 import os
 from typing import Any, Callable, Dict, List, TypedDict
 
+from agents.digest import warehouse_digest
 from agents.specialists import NemotronSpecialistRunner
 from services.config import ProductionConfig
 from services.enterprise import ERPAdapter, ForecastAdapter, WMSAdapter
@@ -28,6 +29,7 @@ class WarehouseState(TypedDict, total=False):
     actor: str
     constraints: Dict[str, Any]
     source_data: Dict[str, Any]
+    data_digest: Dict[str, Any]
     policy_documents: List[Dict[str, Any]]
     plan: Dict[str, Any]
     specialist_analysis: Dict[str, Any]
@@ -47,7 +49,8 @@ class ProductionWarehouseWorkflow:
         self.erp = erp or ERPAdapter(JsonHttpClient(os.getenv("ERP_URL", "http://localhost:9002")))
         self.forecast = forecast or ForecastAdapter(JsonHttpClient(os.getenv("FORECAST_URL", "http://localhost:9003")))
         self.nim = NIMClient(self.config)
-        self.specialist_runner = specialist_runner or NemotronSpecialistRunner(self.nim)
+        self.subagent_nim = NIMClient.for_subagent(self.config)
+        self.specialist_runner = specialist_runner or NemotronSpecialistRunner(self.subagent_nim)
         self.guardrails = GuardrailsClient(self.config)
         self.openshell = OpenShellPolicy(self.config)
         self.approvals = ApprovalWorkflow(self.config.approval_store)
@@ -93,7 +96,9 @@ class ProductionWarehouseWorkflow:
 
     def _ingest(self, state: WarehouseState) -> Dict[str, Any]:
         self._trace(state, "ingest", "Reading WMS, ERP, and forecasting system snapshots")
-        return {"source_data": {"wms": self.wms.snapshot(), "erp": {"sku_master": self.erp.sku_master(), "inbound": self.erp.inbound_shipments()}, "forecast": self.forecast.forecast()}}
+        source_data = {"wms": self.wms.snapshot(), "erp": {"sku_master": self.erp.sku_master(), "inbound": self.erp.inbound_shipments()}, "forecast": self.forecast.forecast()}
+        digest = warehouse_digest(source_data, state.get("constraints", {}))
+        return {"source_data": source_data, "data_digest": digest}
 
     def _load_policies(self, state: WarehouseState) -> Dict[str, Any]:
         self._trace(state, "load_policies", "Loading warehouse operating policies")
@@ -101,11 +106,11 @@ class ProductionWarehouseWorkflow:
 
     def _plan(self, state: WarehouseState) -> Dict[str, Any]:
         self._trace(state, "plan", "Using Nemotron through NIM to produce a structured plan")
-        prompt = {"goal": state["business_goal"], "constraints": state.get("constraints", {}), "source_data": state.get("source_data", {}), "policies": state.get("policy_documents", [])}
+        prompt = {"goal": state["business_goal"], "constraints": state.get("constraints", {}), "warehouse_summary": state.get("data_digest", {}), "policies": state.get("policy_documents", [])}
         guardrail = self.guardrails.validate("input", prompt)
         if not guardrail.allowed:
             raise PermissionError(guardrail.reason)
-        response = self.nim.chat([{"role": "system", "content": "Return a JSON warehouse optimization plan with objectives and constraints."}, {"role": "user", "content": json.dumps(prompt, default=str)}])
+        response = self.nim.chat([{"role": "system", "content": "You plan warehouse slotting. You are given an aggregated summary, not raw records; the solver holds the full data. Return only JSON with objectives, weights and binding constraints."}, {"role": "user", "content": json.dumps(prompt, default=str)}])
         content = response.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         try:
             plan = json.loads(content)

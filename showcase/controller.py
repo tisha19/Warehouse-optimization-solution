@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any, Callable, Dict, Mapping
 
 from agents.workflow import ProductionWarehouseWorkflow
@@ -28,7 +29,10 @@ class ShowcaseController:
         self.version = 0
         self.workflow_state: Dict[str, Any] = {}
         self.view_state: Dict[str, Any] = {}
-        self.run()
+        self.planning = False
+        self._lock = threading.Lock()
+        # A full Ultra + cuOpt plan takes minutes, so never block the HTTP bind on it.
+        self.plan_async()
 
     @staticmethod
     def missing_configuration() -> list[str]:
@@ -111,8 +115,44 @@ class ShowcaseController:
         self.view_state = self._to_view_state(self.workflow_state)
         return self.view_state
 
+    def plan_async(self, goal: str | None = None, constraints: Mapping[str, Any] | None = None) -> None:
+        if self.planning:
+            return
+        self.planning = True
+
+        def worker() -> None:
+            try:
+                self.run(goal, constraints)
+            finally:
+                self.planning = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def state(self) -> Dict[str, Any]:
-        return self.view_state or self.run()
+        if self.view_state:
+            return {**self.view_state, "planning": self.planning}
+        return self._pending_state()
+
+    def _pending_state(self) -> Dict[str, Any]:
+        """Shape-compatible placeholder so the UI can render while the first plan runs."""
+        return {
+            "mode": "PLANNING",
+            "planning": True,
+            "version": self.version,
+            "headline": "Planning in progress - Nemotron 3 Ultra and cuOpt are solving",
+            "subhead": "The first plan takes a few minutes; this page refreshes itself",
+            "metrics": {"travel_reduction": 0, "replenishment_reduction": 0, "move_count": 0,
+                        "labor_minutes": 0, "violations": 0, "plan_value": 0},
+            "moves": [],
+            "constraints": dict(self.constraints),
+            "zones": [],
+            "agents": [{"name": "Orchestrator", "status": "running", "detail": "Awaiting first plan"}],
+            "services": self.service_status(),
+            "explanation": "Waiting for the supervisor NIM and cuOpt to return the first plan.",
+            "approval_id": None,
+            "approval_status": "PENDING",
+            "data_counts": {"skus": 0, "slots": 0, "forecast_rows": 0},
+        }
 
     def replan(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         constraints = {"max_moves": max(1, min(20, int(payload.get("max_moves", self.constraints["max_moves"])) ))}

@@ -1,0 +1,31 @@
+# OpenShell sandbox policy for the MAIW warehouse deep agent.
+#
+# This is the security boundary the OpenShell gateway enforces on the sandbox,
+# regardless of what the model is told to do. The deep agent may inspect data, run
+# what-if simulations and generate scripts here without touching the host or live
+# warehouse systems (WMS/TMS/YMS/robotics). Tighten/loosen per environment.
+version: 1
+
+filesystem_policy:
+    include_workdir: true
+    # System paths the sandbox may read but never modify.
+    read_only:
+        - /usr
+        - /lib
+        - /proc
+        - /dev/urandom
+        - /app
+        - /etc
+        - /var/log
+    # The only writable locations: the agent's scratch area and temp.
+    read_write:
+        - /sandbox
+        - /tmp
+        - /dev/null
+
+landlock:
+    compatibility: best_effort
+
+process:
+    run_as_user: sandbox
+    run_as_group: sandbox

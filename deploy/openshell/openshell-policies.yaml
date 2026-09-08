@@ -1,0 +1,66 @@
+# OpenShell egress policy for the warehouse slotting planner.
+# Every governed tool call and model/optimizer egress is checked against this file.
+version: 2
+
+egress:
+  default: deny
+  approval:
+    mode: one_time_per_user
+    wait_seconds: 90
+
+sandbox:
+  name: ${OPENSHELL_SANDBOX_NAME:-warehouse-sandbox}
+  timeout_seconds: ${OPENSHELL_DEFAULT_TIMEOUT_SECONDS:-1800}
+
+services:
+  # --- read-only enterprise data: safe, allowed and audited ---
+  read_wms:
+    kind: tool
+    description: Read WMS layout, slot occupancy and inventory snapshots.
+    approval: auto
+  read_erp:
+    kind: tool
+    description: Read ERP SKU master and inbound shipments.
+    approval: auto
+  read_forecast:
+    kind: tool
+    description: Read demand forecast rows.
+    approval: auto
+  load_policy:
+    kind: tool
+    description: Load local warehouse operating policies.
+    approval: auto
+
+  # --- optimisation egress ---
+  solve_slotting:
+    kind: http
+    description: Submit a constrained slotting problem to cuOpt.
+    approval: per_user
+    upstreams:
+      default: ${CUOPT_URL:-http://127.0.0.1:8002}
+
+  # --- model egress ---
+  llm.supervisor:
+    kind: http
+    description: Nemotron 3 Ultra supervisor NIM.
+    approval: per_user
+    upstreams:
+      default: ${NIM_BASE_URL:-http://127.0.0.1:8000/v1}
+      cloud: ${NIM_CLOUD_BASE_URL:-https://integrate.api.nvidia.com/v1}
+  llm.subagent:
+    kind: http
+    description: Nemotron 3.5 Lightning sub-agent NIM.
+    approval: per_user
+    upstreams:
+      default: ${NIM_SUBAGENT_BASE_URL:-http://127.0.0.1:8010/v1}
+      cloud: ${NIM_CLOUD_BASE_URL:-https://integrate.api.nvidia.com/v1}
+
+  # --- governance-sensitive actions ---
+  create_approval:
+    kind: tool
+    description: Create a pending human approval record for a move plan.
+    approval: per_user
+  write_wms:
+    kind: tool
+    description: Write approved moves back to the WMS. Never auto-granted.
+    approval: per_call

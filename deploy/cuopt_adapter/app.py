@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import httpx
@@ -32,8 +33,12 @@ logging.basicConfig(level=logging.INFO)
 CUOPT_SERVER_URL = os.getenv("CUOPT_SERVER_URL", "http://127.0.0.1:5000").rstrip("/")
 # Path differs across cuOpt releases; override with CUOPT_SOLVE_PATH if needed.
 CUOPT_SOLVE_PATH = os.getenv("CUOPT_SOLVE_PATH", "/cuopt/request")
+CUOPT_RESULT_PATH = os.getenv("CUOPT_RESULT_PATH", "/cuopt/solution")
+POLL_INTERVAL = float(os.getenv("CUOPT_POLL_INTERVAL_SECONDS", "0.5"))
 REQUEST_TIMEOUT = float(os.getenv("CUOPT_TIMEOUT_SECONDS", "120"))
 MAX_CANDIDATES = int(os.getenv("CUOPT_MAX_CANDIDATES", "40"))
+# Average picker walking speed, used to convert metres saved into hours saved.
+WALK_SPEED_MPS = float(os.getenv("PICKER_WALK_SPEED_MPS", "1.2"))
 
 app = FastAPI(title="Warehouse slotting adapter for cuOpt")
 
@@ -153,14 +158,28 @@ def _find_primal(payload: Any) -> Optional[List[float]]:
 
 
 def _solve_with_cuopt(problem: Dict[str, Any]) -> List[float]:
+    """cuOpt queues the job and returns a reqId, so the result must be polled."""
     url = CUOPT_SERVER_URL + CUOPT_SOLVE_PATH
     try:
         response = httpx.post(url, json=problem, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
+        payload = response.json()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=503, detail=f"cuOpt call failed: {exc}") from exc
 
-    primal = _find_primal(response.json())
+    primal = _find_primal(payload)
+    req_id = payload.get("reqId") if isinstance(payload, dict) else None
+    deadline = time.monotonic() + REQUEST_TIMEOUT
+
+    while not primal and req_id and time.monotonic() < deadline:
+        time.sleep(POLL_INTERVAL)
+        try:
+            polled = httpx.get(f"{CUOPT_SERVER_URL}{CUOPT_RESULT_PATH}/{req_id}", timeout=REQUEST_TIMEOUT)
+            polled.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=503, detail=f"cuOpt polling failed: {exc}") from exc
+        primal = _find_primal(polled.json())
+
     if not primal:
         raise HTTPException(status_code=503, detail="cuOpt returned no primal solution")
     return primal
@@ -176,6 +195,9 @@ def solve_slotting(request: SlottingRequest) -> Dict[str, Any]:
     skus, slots, current_slot, max_moves = _build_inputs(request)
     if not skus or not slots:
         raise HTTPException(status_code=422, detail="source_data lacked usable SKU master or warehouse layout")
+
+    layout_all = request.source_data.get("wms", {}).get("warehouse_layout", [])
+    distance_by_slot = {str(r.get("slot_id")): float(r.get("distance_to_picking_m", 0.0)) for r in layout_all}
 
     primal = _solve_with_cuopt(_assignment_lp(skus, slots))
     n_slot = len(slots)
@@ -193,14 +215,15 @@ def solve_slotting(request: SlottingRequest) -> Dict[str, Any]:
         origin = current_slot.get(sku_id, "Unassigned")
         if origin == str(slot.get("slot_id")):
             continue
-        saved_metres = float(sku["_picks"]) * float(slot.get("distance_to_picking_m", 0.0))
-        candidates.append((saved_metres, sku, slot, origin))
+        gain = float(sku["_picks"]) * (distance_by_slot.get(origin, 0.0) - float(slot.get("distance_to_picking_m", 0.0)))
+        candidates.append((gain, sku, slot, origin))
 
-    candidates.sort(key=lambda item: item[0])
-    selected = candidates[:max_moves]
+    # Keep only relocations that actually shorten travel, best first.
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    selected = [item for item in candidates if item[0] > 0][:max_moves]
 
     moves: List[Dict[str, Any]] = []
-    for index, (_, sku, slot, origin) in enumerate(selected):
+    for index, (gain, sku, slot, origin) in enumerate(selected):
         moves.append({
             "move_id": f"MV-{index + 1:03d}",
             "sku_id": str(sku.get("sku_id")),
@@ -210,15 +233,15 @@ def solve_slotting(request: SlottingRequest) -> Dict[str, Any]:
             "day": index % max(request.planning_horizon_days, 1),
             "window": "Low-volume shift",
             "reason": f"cuOpt assigned this SKU ({round(float(sku['_picks']), 1)} picks/day) to a slot {slot.get('distance_to_picking_m')}m from the pick face.",
-            "benefit_hours_per_day": round(float(sku["_picks"]) * float(slot.get("distance_to_picking_m", 0.0)) / 3600.0, 2),
+            "benefit_hours_per_day": round(gain / (WALK_SPEED_MPS * 3600.0), 2),
             "labor_minutes": 10 + index * 2,
             "confidence": 95,
             "type": "travel",
         })
 
-    baseline = sum(float(sku["_picks"]) * 40.0 for sku in skus[:len(selected)]) or 1.0
+    baseline = sum(float(sku["_picks"]) * distance_by_slot.get(origin, 0.0) for _, sku, _, origin in selected)
     optimised = sum(float(sku["_picks"]) * float(slot.get("distance_to_picking_m", 0.0)) for _, sku, slot, _ in selected)
-    reduction = max(0.0, min(100.0, (1.0 - optimised / baseline) * 100.0))
+    reduction = 0.0 if baseline <= 0 else max(0.0, min(100.0, (1.0 - optimised / baseline) * 100.0))
 
     return {
         "headline": "cuOpt constrained slotting plan",

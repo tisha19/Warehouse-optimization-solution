@@ -14,3 +14,8 @@ approvals.json
 
 # macOS
 .DS_Store
+
+# Runtime state written by the cluster stack
+deploy/state/
+deploy/openshell/state/
+warehouse-stack-*.log

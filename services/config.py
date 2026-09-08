@@ -62,6 +62,7 @@ class ProductionConfig:
     nim_model: str = _env("NIM_MODEL", "nvidia/nemotron", aliases=("LLM_MODEL",))
     nim_api_key: str = _env("NIM_API_KEY", "", aliases=("NVIDIA_API_KEY",))
     nim_subagent_model: str = _env("NIM_SUBAGENT_MODEL", "", aliases=("LLM_SUBAGENT_MODEL",))
+    nim_subagent_base_url: str = _env("NIM_SUBAGENT_BASE_URL", "")
     nim_cloud_base_url: str = _env("NIM_CLOUD_BASE_URL", "https://integrate.api.nvidia.com/v1")
     nim_cloud_api_key: str = _env("NIM_CLOUD_API_KEY", "", aliases=("NVIDIA_API_KEY",))
     nim_cloud_model: str = _env("NIM_CLOUD_MODEL", "")

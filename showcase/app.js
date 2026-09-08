@@ -69,5 +69,11 @@ $('plannerPrompt').addEventListener('keydown', (event) => { if (event.key === 'E
 $('approvePlan').addEventListener('click', () => showToast('Plan opened for supervisor review'));
 $('coldChain').addEventListener('click', (event) => event.currentTarget.classList.toggle('active'));
 
-request('/api/state').then(render).catch(() => showToast('Unable to load scenario'));
+function poll() {
+  request('/api/state').then((data) => {
+    render(data);
+    if (data.planning) setTimeout(poll, 5000);
+  }).catch(() => setTimeout(poll, 5000));
+}
+poll();
 lucide.createIcons();

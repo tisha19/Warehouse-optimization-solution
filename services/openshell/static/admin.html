@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EY OpenShell — Sandbox Admin · Governance Console</title>
+<style>
+  /* EY brand: EY Yellow on EY dark gray (#2E2E38 family), per ey.com */
+  :root {
+    --bg: #1a1a24; --panel: #23232f; --panel2: #1e1e29; --line: #3a3a48;
+    --text: #f4f4f6; --muted: #9d9dab; --green: #ffe600; --green-dim: #8f8200;
+    --amber: #e8b339; --red: #e0564b; --blue: #6aa1e0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 22px;
+           background: #0a0c0b; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+  header em { color: var(--muted); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  header .status { margin-left: auto; font-size: 12px; color: var(--muted); }
+  header .status b { color: var(--green); }
+  main { max-width: 1200px; margin: 0 auto; padding: 18px 22px 60px; display: grid; gap: 18px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  section h2 { margin: 0 0 4px; font-size: 14px; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); }
+  section p.hint { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  td { padding: 7px 10px; border-bottom: 1px solid #20272308; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 11.5px; border: 1px solid transparent; }
+  .pill.ok    { color: var(--green); border-color: var(--green-dim); background: rgba(118,185,0,.08); }
+  .pill.warn  { color: var(--amber); border-color: #8a6a1e; background: rgba(232,179,57,.08); }
+  .pill.bad   { color: var(--red);   border-color: #7c3a34; background: rgba(224,86,75,.08); }
+  .pill.info  { color: var(--blue);  border-color: #3c5b82; background: rgba(106,161,224,.08); }
+  button { background: var(--green); color: #0b0d0b; border: 0; border-radius: 6px;
+           padding: 6px 14px; font-weight: 700; cursor: pointer; font-size: 12.5px; }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+  button.danger { background: transparent; color: var(--red); border: 1px solid #7c3a34; font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  .empty { color: var(--muted); font-size: 13px; padding: 10px 2px; }
+  #pendingSection { border-color: var(--amber); box-shadow: 0 0 0 1px rgba(232,179,57,.15); display: none; }
+  #pendingSection h2 { color: var(--amber); }
+  .svc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; }
+  .svc { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .svc .name { font-weight: 700; font-size: 13.5px; }
+  .svc .kind { color: var(--muted); font-size: 11.5px; margin-left: 6px; text-transform: uppercase; }
+  .svc .desc { color: var(--muted); font-size: 12px; margin: 6px 0 8px; min-height: 30px; }
+  .svc .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+  .svc .calls { margin-left: auto; color: var(--green); font-weight: 700; }
+  textarea { width: 100%; min-height: 340px; background: #0a0c0b; color: var(--text); border: 1px solid var(--line);
+             border-radius: 8px; padding: 12px; font: 12.5px/1.5 "SF Mono", ui-monospace, Menlo, Consolas, monospace; resize: vertical; }
+  .bar { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+  #policyMsg { font-size: 12.5px; }
+  #policyMsg.ok { color: var(--green); } #policyMsg.err { color: var(--red); }
+  code { color: var(--green); background: rgba(118,185,0,.07); padding: 0 5px; border-radius: 4px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <svg viewBox="0 0 120 120" width="40" height="40" role="img" aria-label="EY" style="flex:0 0 auto;border-radius:4px">
+    <rect width="120" height="120" fill="#2e2e38"/>
+    <polygon points="106,14 106,32 14,60" fill="#ffe600"/>
+    <text x="14" y="106" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="52" fill="#ffffff">EY</text>
+  </svg>
+  <h1>EY OpenShell · Sandbox Admin <span class="sub">Governance Console — every agent egress approved &amp; audited · <em>Building a better working world</em></span></h1>
+  <div class="status" id="status">connecting…</div>
+</header>
+<main>
+
+  <section id="pendingSection">
+    <h2>Pending approvals</h2>
+    <p class="hint">Approval requests. For <code>per_user</code> services, approving registers a <b>one-time grant for that user</b> (later calls auto-allowed and audited). For <code>per_call</code> services (the LLM slots), <b>every new LLM call parks here again</b> — even for previously approved users and registered upstreams.</p>
+    <table>
+      <thead><tr><th>Requested</th><th>User</th><th>Service</th><th>First operation</th><th></th></tr></thead>
+      <tbody id="pendingRows"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Governed services</h2>
+    <p class="hint">Every egress path the agents may consume — declared in the policy YAML, enforced by the governor. Nothing outside this list is reachable while governance is on.</p>
+    <div class="svc-grid" id="svcGrid"></div>
+  </section>
+
+  <section>
+    <h2>Grants <button class="danger" id="revokeAllBtn" style="float:right">⟲ Reset — revoke all</button></h2>
+    <p class="hint">One-time per-user approvals currently in force. Revoke to force a user back through approval. <b>Reset</b> revokes every grant at once (and clears pending requests) — all users re-request approval on their next call.</p>
+    <table>
+      <thead><tr><th>User</th><th>Service</th><th>Status</th><th>Granted by</th><th>Granted at</th><th>Registered calls</th><th></th></tr></thead>
+      <tbody id="grantRows"></tbody>
+    </table>
+    <div class="empty" id="grantEmpty" style="display:none">No grants yet — they appear when the admin approves a request (or a service is <code>approval: auto</code>).</div>
+  </section>
+
+  <section>
+    <h2>Audit log <span class="muted" style="text-transform:none;font-weight:400">— every registered call</span></h2>
+    <table>
+      <thead><tr><th>Time</th><th>User</th><th>Service</th><th>Operation</th><th>Decision</th><th>Source</th><th>Detail</th></tr></thead>
+      <tbody id="auditRows"></tbody>
+    </table>
+    <div class="empty" id="auditEmpty" style="display:none">No calls registered yet.</div>
+  </section>
+
+  <section>
+    <h2>Policy YAML</h2>
+    <p class="hint">Live policy file (<span id="policyPath" class="muted"></span>). Edits are validated, backed up (<code>.bak</code>) and hot-applied — no restart needed.</p>
+    <textarea id="policyText" spellcheck="false"></textarea>
+    <div class="bar">
+      <button id="policySave">Apply policy</button>
+      <button class="secondary" id="policyReload">Reload from disk</button>
+      <span id="policyMsg"></span>
+    </div>
+  </section>
+
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtTs = (ts) => ts ? new Date(ts).toLocaleTimeString() : "";
+let policyDirty = false;
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  return res.json();
+}
+
+async function refresh() {
+  try {
+    const [health, requests, services, grants, audit] = await Promise.all([
+      api("/api/v1/healthz"),
+      api("/api/v1/requests?status=pending"),
+      api("/api/v1/services"),
+      api("/api/v1/grants"),
+      api("/api/v1/audit?limit=100"),
+    ]);
+    $("status").innerHTML = `governor <b>online</b> · ${health.services} services · ${health.pending_requests} pending`;
+    renderPending(requests);
+    renderServices(services);
+    renderGrants(grants);
+    renderAudit(audit);
+  } catch (e) {
+    $("status").innerHTML = `<span style="color:var(--red)">governor unreachable — ${esc(e.message)}</span>`;
+  }
+}
+
+function renderPending(reqs) {
+  $("pendingSection").style.display = reqs.length ? "block" : "none";
+  if (reqs.length && document.title.indexOf("●") !== 0) document.title = "● " + document.title;
+  if (!reqs.length) document.title = document.title.replace(/^● /, "");
+  $("pendingRows").innerHTML = reqs.map(r => `
+    <tr>
+      <td>${fmtTs(r.requested_at)}</td>
+      <td><b>${esc(r.user)}</b></td>
+      <td><code>${esc(r.service)}</code></td>
+      <td class="muted">${esc(r.first_operation)}</td>
+      <td style="white-space:nowrap">
+        <button onclick="resolve('${r.id}','approve')">Approve</button>
+        <button class="danger" onclick="resolve('${r.id}','deny')">Deny</button>
+      </td>
+    </tr>`).join("");
+}
+
+function renderServices(services) {
+  $("svcGrid").innerHTML = services.map(s => `
+    <div class="svc">
+      <div><span class="name">${esc(s.name)}</span><span class="kind">${esc(s.kind)}</span>
+        <span class="calls" style="float:right">${s.calls} calls</span></div>
+      <div class="desc">${esc(s.description)}</div>
+      <div class="row">
+        <span class="pill ${s.approval === "auto" ? "info" : s.approval === "per_call" ? "bad" : "warn"}">${s.approval === "auto" ? "auto-approved" : s.approval === "per_call" ? "approval on EVERY call" : "one-time approval / user"}</span>
+        ${s.pending.map(u => `<span class="pill warn">pending: ${esc(u)}</span>`).join("")}
+        ${s.approved_users.map(u => `<span class="pill ok">${esc(u)}</span>`).join("")}
+        ${s.denied_users.map(u => `<span class="pill bad">${esc(u)} ✕</span>`).join("")}
+      </div>
+      ${Object.keys(s.upstreams || {}).length ? `<div class="row muted" style="margin-top:6px;font-size:11.5px">
+        ${Object.entries(s.upstreams).map(([k, v]) => `${esc(k)} → ${esc(v)}`).join(" · ")}</div>` : ""}
+    </div>`).join("");
+}
+
+function renderGrants(grants) {
+  $("grantEmpty").style.display = grants.length ? "none" : "block";
+  $("grantRows").innerHTML = grants.map(g => `
+    <tr>
+      <td><b>${esc(g.user)}</b></td>
+      <td><code>${esc(g.service)}</code></td>
+      <td><span class="pill ${g.status === "approved" ? "ok" : "bad"}">${esc(g.status)}</span></td>
+      <td class="muted">${esc(g.granted_by)}</td>
+      <td class="muted">${esc((g.granted_at || "").replace("T", " ").slice(0, 19))}</td>
+      <td>${g.calls ?? 0}</td>
+      <td><button class="danger" onclick="revoke('${encodeURIComponent(g.user)}','${encodeURIComponent(g.service)}')">Revoke</button></td>
+    </tr>`).join("");
+}
+
+function renderAudit(entries) {
+  $("auditEmpty").style.display = entries.length ? "none" : "block";
+  const pill = (d) => d === "allowed" || d === "completed" || d === "applied" ? "ok"
+    : d === "pending" ? "warn" : d === "revoked" ? "info" : "bad";
+  $("auditRows").innerHTML = entries.map(e => `
+    <tr>
+      <td class="muted">${fmtTs(e.ts)}</td>
+      <td>${esc(e.user)}</td>
+      <td><code>${esc(e.service)}</code></td>
+      <td class="muted">${esc(e.operation)}</td>
+      <td><span class="pill ${pill(e.decision)}">${esc(e.decision)}</span></td>
+      <td class="muted">${esc(e.source)}</td>
+      <td class="muted">${esc(e.status_code ? `HTTP ${e.status_code} · ${e.duration_ms} ms` : (e.note || e.resolved_by || ""))}</td>
+    </tr>`).join("");
+}
+
+async function resolve(id, action) {
+  try { await api(`/api/v1/requests/${id}/${action}`, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({resolved_by: "admin-console"})});
+  } catch (e) { alert(e.message); }
+  refresh();
+}
+
+async function revoke(user, service) {
+  if (!confirm(`Revoke ${decodeURIComponent(user)} → ${decodeURIComponent(service)}?`)) return;
+  try { await api(`/api/v1/grants/${user}/${service}`, {method: "DELETE"}); }
+  catch (e) { alert(e.message); }
+  refresh();
+}
+
+$("revokeAllBtn").addEventListener("click", async () => {
+  if (!confirm("Reset governance: revoke ALL grants (every user, every service) and clear pending requests?\n\nEveryone will need fresh admin approval on their next call.")) return;
+  try {
+    const out = await api("/api/v1/grants", {method: "DELETE"});
+    alert(`Reset done — ${out.grants} grant(s) revoked, ${out.pending_cleared} pending request(s) cleared.`);
+  } catch (e) { alert(e.message); }
+  refresh();
+});
+
+async function loadPolicy() {
+  const p = await api("/api/v1/policy");
+  $("policyPath").textContent = p.path;
+  $("policyText").value = p.yaml;
+  policyDirty = false;
+  $("policyMsg").textContent = "";
+}
+
+$("policyText").addEventListener("input", () => { policyDirty = true; });
+$("policyReload").addEventListener("click", () => loadPolicy().catch(e => alert(e.message)));
+$("policySave").addEventListener("click", async () => {
+  const msg = $("policyMsg");
+  try {
+    const out = await api("/api/v1/policy", {
+      method: "PUT", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({yaml: $("policyText").value}),
+    });
+    msg.className = "ok"; msg.textContent = `applied ✓ (${out.services.length} services)`;
+    policyDirty = false;
+    refresh();
+  } catch (e) { msg.className = "err"; msg.textContent = e.message; }
+});
+
+loadPolicy().catch(() => {});
+refresh();
+setInterval(refresh, 2500);
+</script>
+</body>
+</html>
