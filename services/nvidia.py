@@ -1,33 +1,40 @@
-"""NVIDIA NIM, NeMo Retriever, cuOpt, and Guardrails clients."""
+"""NVIDIA NIM, cuOpt, and Guardrails clients."""
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional
 
 from services.config import ProductionConfig
-from services.http_client import JsonHttpClient
+from services.http_client import JsonHttpClient, ServiceError
 
 
 class NIMClient:
+    """Calls the self-hosted NIM first and fails over to NVIDIA cloud NIM when it is unreachable."""
+
     def __init__(self, config: ProductionConfig):
         self.client = JsonHttpClient(config.nim_base_url, config.request_timeout_seconds, config.nim_api_key)
         self.model = config.nim_model
+        self.subagent_model = config.nim_subagent_model or config.nim_model
+        self.fallback_model = config.nim_cloud_model or config.nim_model
+        self.active_endpoint = self.client.base_url
+        self.fallback: Optional[JsonHttpClient] = None
+        if config.nim_cloud_fallback and config.nim_cloud_api_key and config.nim_cloud_base_url.rstrip("/") != self.client.base_url:
+            self.fallback = JsonHttpClient(config.nim_cloud_base_url, config.request_timeout_seconds, config.nim_cloud_api_key)
 
-    def chat(self, messages: List[Mapping[str, str]], tools: Optional[List[Mapping[str, Any]]] = None) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"model": self.model, "messages": messages, "temperature": 0.1}
+    def chat(self, messages: List[Mapping[str, str]], tools: Optional[List[Mapping[str, Any]]] = None, model: Optional[str] = None) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"model": model or self.model, "messages": messages, "temperature": 0.1}
         if tools:
             payload["tools"] = tools
-        return self.client.post("chat/completions", payload)
-
-
-class NeMoRetriever:
-    def __init__(self, config: ProductionConfig):
-        if not config.retriever_url:
-            raise RuntimeError("NEMO_RETRIEVER_URL is required for production retrieval")
-        self.client = JsonHttpClient(config.retriever_url, config.request_timeout_seconds, config.nim_api_key)
-
-    def search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        response = self.client.post("search", {"query": query, "top_k": top_k})
-        return list(response.get("documents", response.get("results", [])))
+        try:
+            response = self.client.post("chat/completions", payload)
+            self.active_endpoint = self.client.base_url
+            return response
+        except ServiceError:
+            if not self.fallback:
+                raise
+            payload["model"] = self.fallback_model if model is None else model
+            response = self.fallback.post("chat/completions", payload)
+            self.active_endpoint = self.fallback.base_url
+            return response
 
 
 class CuOptClient:

@@ -3,9 +3,11 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from mocks.enterprise_services import MockServiceState
 from services.config import ProductionConfig
+from agents.workflow import ProductionWarehouseWorkflow
 from showcase_server import Scenario
 from tools.evaluation import AgentCase, AgentEvaluator
 from tools.evaluation_suite import AGENT_NAMES, evaluate_all_agents
@@ -69,9 +71,22 @@ class ProductionHarnessTests(unittest.TestCase):
 
     def test_showcase_move_approval(self):
         scenario = Scenario()
-        updated = scenario.approve("MV-101")
-        move = next(move for move in updated["moves"] if move["id"] == "MV-101")
-        self.assertEqual(move["status"], "Approved")
+        move_id = scenario.state()["moves"][0]["id"]
+        updated = scenario.approve(move_id)
+        self.assertEqual(updated["approval_status"], "APPROVED")
+        self.assertTrue(all(move["status"] == "Approved" for move in updated["moves"]))
+
+    @patch("agents.workflow.CuOptClient.solve_slotting", side_effect=RuntimeError("cuOpt unavailable"))
+    @patch("agents.workflow.NIMClient.chat", side_effect=RuntimeError("NIM unavailable"))
+    def test_workflow_keeps_renderable_data_with_unavailable_live_services(self, *_):
+        state = MockServiceState(seed=7)
+        controller = Scenario()
+        controller.enterprise = state
+        view = controller.run("Reduce travel and keep cold-chain locked", {"max_moves": 6, "locked_skus": ["SKU-100"]})
+        self.assertEqual(view["metrics"]["move_count"], 6)
+        self.assertTrue(view["moves"])
+        self.assertEqual(view["metrics"]["violations"], 0)
+        self.assertNotIn("SKU-100", {move["code"] for move in view["moves"]})
 
 if __name__ == "__main__":
     unittest.main()

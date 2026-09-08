@@ -31,7 +31,6 @@ export NIM_BASE_URL="https://your-nim-endpoint/v1"
 export NIM_MODEL="your-nemotron-model"
 export NIM_API_KEY="your-api-key"
 
-export NEMO_RETRIEVER_URL="https://your-retriever-endpoint"
 export CUOPT_URL="https://your-cuopt-endpoint"
 export NEMO_GUARDRAILS_URL="https://your-guardrails-endpoint"
 export OPENSHELL_URL="https://your-openshell-endpoint"
