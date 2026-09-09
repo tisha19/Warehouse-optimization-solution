@@ -26,10 +26,15 @@ class NIMClient:
         model = config.nim_subagent_model or config.nim_model
         return cls(config, base_url=config.nim_subagent_base_url or config.nim_base_url, model=model, cloud_model=model)
 
-    def chat(self, messages: List[Mapping[str, str]], tools: Optional[List[Mapping[str, Any]]] = None, model: Optional[str] = None) -> Dict[str, Any]:
+    def chat(self, messages: List[Mapping[str, str]], tools: Optional[List[Mapping[str, Any]]] = None, model: Optional[str] = None, json_only: bool = False) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"model": model or self.model, "messages": messages, "temperature": 0.1}
         if tools:
             payload["tools"] = tools
+        if json_only:
+            # Nemotron is a reasoning model, so without constrained decoding it
+            # answers with chain-of-thought prose instead of the JSON we parse.
+            payload["response_format"] = {"type": "json_object"}
+            payload["reasoning_effort"] = "none"
         try:
             response = self.client.post("chat/completions", payload)
             self.active_endpoint = self.client.base_url

@@ -37,6 +37,10 @@ CUOPT_RESULT_PATH = os.getenv("CUOPT_RESULT_PATH", "/cuopt/solution")
 POLL_INTERVAL = float(os.getenv("CUOPT_POLL_INTERVAL_SECONDS", "0.5"))
 REQUEST_TIMEOUT = float(os.getenv("CUOPT_TIMEOUT_SECONDS", "120"))
 MAX_CANDIDATES = int(os.getenv("CUOPT_MAX_CANDIDATES", "40"))
+# cuOpt 26.08 crashes its solver process in the default concurrent mode (0) on
+# this assignment LP, which dual simplex (2) solves in hundredths of a second.
+CUOPT_METHOD = int(os.getenv("CUOPT_METHOD", "2"))
+CUOPT_TIME_LIMIT = float(os.getenv("CUOPT_TIME_LIMIT_SECONDS", "30"))
 # Average picker walking speed, used to convert metres saved into hours saved.
 WALK_SPEED_MPS = float(os.getenv("PICKER_WALK_SPEED_MPS", "1.2"))
 
@@ -160,8 +164,10 @@ def _find_primal(payload: Any) -> Optional[List[float]]:
 def _solve_with_cuopt(problem: Dict[str, Any]) -> List[float]:
     """cuOpt queues the job and returns a reqId, so the result must be polled."""
     url = CUOPT_SERVER_URL + CUOPT_SOLVE_PATH
+    body = dict(problem)
+    body["solver_config"] = {"method": CUOPT_METHOD, "time_limit": CUOPT_TIME_LIMIT}
     try:
-        response = httpx.post(url, json=problem, timeout=REQUEST_TIMEOUT)
+        response = httpx.post(url, json=body, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         payload = response.json()
     except httpx.HTTPError as exc:

@@ -59,30 +59,47 @@ class ProductionHarnessTests(unittest.TestCase):
         self.assertEqual(len(state.snapshot()["warehouse_layout"]), 498)
         self.assertEqual(len(state.forecast(14)["forecast"]), 1400)
 
+    def _offline_scenario(self, directory: str) -> Scenario:
+        """Scenario with the live workflow stubbed out, so the deterministic fallback runs."""
+        approvals = ApprovalWorkflow(str(Path(directory) / "approvals.json"))
+
+        class UnreachableWorkflow:
+            def __init__(self) -> None:
+                self.approvals = approvals
+
+            def run(self, *_args, **_kwargs):
+                raise RuntimeError("live services unavailable")
+
+        return Scenario(workflow_factory=lambda **_: UnreachableWorkflow())
+
     def test_showcase_replan_exposes_tradeoff(self):
-        scenario = Scenario()
-        baseline = scenario.state()
-        revised = scenario.replan({"max_moves": 6, "lock_sku": "SKU-100"})
-        self.assertEqual(baseline["metrics"]["travel_reduction"], 18.5)
-        self.assertEqual(revised["metrics"]["move_count"], 6)
-        self.assertEqual(revised["metrics"]["travel_reduction"], 12.8)
-        self.assertNotIn("SKU-100", {move["code"] for move in revised["moves"]})
-        self.assertEqual(revised["metrics"]["violations"], 0)
+        with tempfile.TemporaryDirectory() as directory:
+            scenario = self._offline_scenario(directory)
+            baseline = scenario.run()
+            revised = scenario.replan({"max_moves": 6, "lock_sku": "SKU-100"})
+            self.assertEqual(baseline["metrics"]["travel_reduction"], 18.5)
+            self.assertEqual(revised["metrics"]["move_count"], 6)
+            self.assertEqual(revised["metrics"]["travel_reduction"], 12.8)
+            self.assertNotIn("SKU-100", {move["code"] for move in revised["moves"]})
+            self.assertEqual(revised["metrics"]["violations"], 0)
 
     def test_showcase_move_approval(self):
-        scenario = Scenario()
-        move_id = scenario.state()["moves"][0]["id"]
-        updated = scenario.approve(move_id)
-        self.assertEqual(updated["approval_status"], "APPROVED")
-        self.assertTrue(all(move["status"] == "Approved" for move in updated["moves"]))
+        with tempfile.TemporaryDirectory() as directory:
+            scenario = self._offline_scenario(directory)
+            move_id = scenario.run()["moves"][0]["id"]
+            updated = scenario.approve(move_id)
+            self.assertEqual(updated["approval_status"], "APPROVED")
+            self.assertTrue(all(move["status"] == "Approved" for move in updated["moves"]))
 
     @patch("agents.workflow.CuOptClient.solve_slotting", side_effect=RuntimeError("cuOpt unavailable"))
     @patch("agents.workflow.NIMClient.chat", side_effect=RuntimeError("NIM unavailable"))
     def test_workflow_keeps_renderable_data_with_unavailable_live_services(self, *_):
         state = MockServiceState(seed=7)
-        controller = Scenario()
-        controller.enterprise = state
-        view = controller.run("Reduce travel and keep cold-chain locked", {"max_moves": 6, "locked_skus": ["SKU-100"]})
+        with tempfile.TemporaryDirectory() as directory:
+            controller = Scenario()
+            controller.workflow.approvals = ApprovalWorkflow(str(Path(directory) / "approvals.json"))
+            controller.enterprise = state
+            view = controller.run("Reduce travel and keep cold-chain locked", {"max_moves": 6, "locked_skus": ["SKU-100"]})
         self.assertEqual(view["metrics"]["move_count"], 6)
         self.assertTrue(view["moves"])
         self.assertEqual(view["metrics"]["violations"], 0)

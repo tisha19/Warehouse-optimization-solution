@@ -2,15 +2,21 @@
 
 import hashlib
 import json
+import logging
 import os
+import threading
+import time
 import urllib.error
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping
 
 from services.config import ProductionConfig
 from services.nvidia import PolicyDecision
+
+LOG = logging.getLogger("governance")
 
 
 class OpenShellPolicy:
@@ -55,24 +61,30 @@ class OpenShellPolicy:
 
 
 class ApprovalWorkflow:
+    # The UI plans on a background thread while requests are served, so the
+    # read-modify-write below has to be serialised or updates are lost.
+    _lock = threading.Lock()
+
     def __init__(self, store_path: str):
         self.path = Path(store_path)
 
     def create(self, moves: List[Mapping[str, Any]], requested_by: str, validation: Mapping[str, Any]) -> Dict[str, Any]:
         raw = json.dumps({"moves": moves, "requested_by": requested_by, "validation": validation}, sort_keys=True)
         approval = {"approval_id": "APR-" + hashlib.sha256(raw.encode()).hexdigest()[:12], "status": "PENDING", "requested_by": requested_by, "created_at": datetime.now(timezone.utc).isoformat(), "moves": moves, "validation": validation}
-        records = self._read()
-        records.append(approval)
-        self._write(records)
+        with self._lock:
+            records = self._read()
+            records.append(approval)
+            self._write(records)
         return approval
 
     def decide(self, approval_id: str, approver: str, approved: bool, reason: str = "") -> Dict[str, Any]:
-        records = self._read()
-        for record in records:
-            if record["approval_id"] == approval_id:
-                record.update({"status": "APPROVED" if approved else "REJECTED", "approver": approver, "decision_at": datetime.now(timezone.utc).isoformat(), "reason": reason})
-                self._write(records)
-                return record
+        with self._lock:
+            records = self._read()
+            for record in records:
+                if record["approval_id"] == approval_id:
+                    record.update({"status": "APPROVED" if approved else "REJECTED", "approver": approver, "decision_at": datetime.now(timezone.utc).isoformat(), "reason": reason})
+                    self._write(records)
+                    return record
         raise KeyError(f"Approval not found: {approval_id}")
 
     def require_approved(self, approval_id: str) -> Dict[str, Any]:
@@ -84,10 +96,20 @@ class ApprovalWorkflow:
     def _read(self) -> List[Dict[str, Any]]:
         if not self.path.exists():
             return []
-        return json.loads(self.path.read_text())
+        text = self.path.read_text().strip()
+        if not text:
+            return []
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # Keep the damaged file for inspection instead of discarding an audit trail.
+            quarantine = self.path.with_suffix(f"{self.path.suffix}.corrupt-{int(time.time())}")
+            os.replace(self.path, quarantine)
+            LOG.error("Approval store was unreadable and has been moved to %s", quarantine)
+            return []
 
     def _write(self, records: List[Mapping[str, Any]]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        temporary = self.path.with_suffix(f"{self.path.suffix}.tmp-{uuid.uuid4().hex}")
         temporary.write_text(json.dumps(records, indent=2))
         os.replace(temporary, self.path)

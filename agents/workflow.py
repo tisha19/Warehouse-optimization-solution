@@ -111,7 +111,7 @@ class ProductionWarehouseWorkflow:
         guardrail = self.guardrails.validate("input", prompt)
         if not guardrail.allowed:
             raise PermissionError(guardrail.reason)
-        response = self.nim.chat([{"role": "system", "content": "You plan warehouse slotting. You are given an aggregated summary, not raw records; the solver holds the full data. Return only JSON with objectives, weights and binding constraints."}, {"role": "user", "content": json.dumps(prompt, default=str)}])
+        response = self.nim.chat([{"role": "system", "content": "You plan warehouse slotting. You are given an aggregated summary, not raw records; the solver holds the full data. Return only JSON with objectives, weights and binding constraints."}, {"role": "user", "content": json.dumps(prompt, default=str)}], json_only=True)
         plan = json_from_response(response, "plan")
         return {"plan": plan}
 
@@ -180,10 +180,12 @@ class ProductionWarehouseWorkflow:
             "required_output": {"moves": ["sku_id", "from_slot", "to_slot", "day", "window", "reason", "benefit_hours_per_day", "labor_minutes", "confidence"], "metrics": ["travel_reduction_pct", "replenishment_reduction_pct", "constraint_violations", "plan_value"]},
         }
         if not self.cuopt:
+            self._trace(state, "optimize", "CUOPT_URL is not configured; using the deterministic fallback")
             return {"optimization_problem": problem, "solution": self._fallback_solution(problem)}
         try:
             return {"optimization_problem": problem, "solution": self.cuopt.solve_slotting(problem)}
-        except Exception:
+        except Exception as exc:
+            self._trace(state, "optimize", f"cuOpt failed, using the deterministic fallback: {exc}")
             return {"optimization_problem": problem, "solution": self._fallback_solution(problem)}
 
     def _validate(self, state: WarehouseState) -> Dict[str, Any]:

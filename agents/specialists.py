@@ -19,6 +19,7 @@ class NemotronSpecialistRunner:
                 {"role": "system", "content": f"You are the {agent_name} warehouse specialist. Return only valid JSON with findings, risks, and constraints."},
                 {"role": "user", "content": json.dumps(payload, default=str)},
             ],
+            json_only=True,
         )
         return json_from_response(response, f"response for {agent_name}")
 
