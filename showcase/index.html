@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>WarehouseIQ</title>
-<link rel="stylesheet" href="styles.css?v=2">
+<link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
 <div class="shell">
@@ -17,6 +17,10 @@
       <a class="nav-item" href="/openshell" data-route="/openshell">OpenShell</a>
     </nav>
     <div class="sidebar-foot">
+      <button class="profile" id="resetDemo" title="Start over: generate a different warehouse and clear this session">
+        <span class="avatar">OP</span>
+        <span class="profile-text"><strong>Operations</strong><span>New dataset</span></span>
+      </button>
       <div class="site" id="siteLabel"></div>
       <div class="runbadge" id="runBadge">No run</div>
     </div>
@@ -38,6 +42,8 @@
         <section class="panel">
           <div class="panel-head"><h2>Detected problems</h2><span class="muted" id="problemCount"></span></div>
           <div id="problemList" class="problem-list"></div>
+          <div class="panel-head sub"><h2>Operational notes</h2><span class="muted">not addressed by slotting</span></div>
+          <div id="noteList" class="problem-list"></div>
         </section>
         <section class="panel">
           <div class="panel-head"><h2>Zones</h2><span class="muted">utilisation and mean distance</span></div>
@@ -72,6 +78,7 @@
         </div>
       </header>
       <div id="haltNotice" class="halt hidden"></div>
+      <div id="optimalNotice" class="resolved hidden"></div>
       <div id="runError" class="failure hidden"></div>
       <div class="stage-rail" id="stageRail"></div>
       <div class="split">
@@ -155,6 +162,6 @@
     </section>
   </main>
 </div>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

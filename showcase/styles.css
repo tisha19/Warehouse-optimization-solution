@@ -49,6 +49,19 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .nav-item:hover { background: var(--panel); color: var(--text); }
 .nav-item.current { background: var(--panel-2); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
 .sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+.profile {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; cursor: pointer; color: var(--text);
+}
+.profile:hover { border-color: var(--accent-dim); }
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%; background: var(--panel-2);
+  display: grid; place-items: center; font-size: 11px; color: var(--muted); flex: 0 0 28px;
+}
+.profile-text { display: flex; flex-direction: column; line-height: 1.25; }
+.profile-text strong { font-size: 12.5px; font-weight: 500; }
+.profile-text span { font-size: 11px; color: var(--muted); }
 .site { color: var(--muted); font-size: 12px; }
 .runbadge {
   font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
@@ -117,6 +130,11 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .problem.low { border-left-color: var(--muted); }
 .problem-metric { font-size: 20px; font-weight: 600; min-width: 72px; }
 .problem p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.panel-head.sub { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.resolved { padding: 12px; border-radius: 8px; background: var(--panel-2); border-left: 3px solid var(--ok); }
+.resolved p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary:disabled { background: var(--panel-2); border-color: var(--line); color: var(--muted); }
 
 /* zones */
 .zone-list { display: flex; flex-direction: column; gap: 8px; }

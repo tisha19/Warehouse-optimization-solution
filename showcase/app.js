@@ -80,17 +80,27 @@ async function loadDashboard() {
       ${deltaMarkup(key, data.kpis[key], data.baseline?.[key], higher)}
     </div>`).join('');
 
-  $('problemCount').textContent = `${data.problems.length} found`;
-  $('problemList').innerHTML = data.problems.length
-    ? data.problems.map((problem) => `
-        <div class="problem ${esc(problem.severity)}">
-          <div class="problem-metric">${esc(problem.metric)}</div>
-          <div>
-            <strong>${esc(problem.title)}</strong>
-            <p>${esc(problem.detail)}</p>
-          </div>
-        </div>`).join('')
-    : empty('No thresholds breached in the current snapshot.');
+  const addressable = data.problems.filter((problem) => problem.addressable);
+  const notes = data.problems.filter((problem) => !problem.addressable);
+  const problemCard = (problem) => `
+    <div class="problem ${esc(problem.severity)}">
+      <div class="problem-metric">${esc(problem.metric)}</div>
+      <div>
+        <strong>${esc(problem.title)}</strong>
+        <p>${esc(problem.detail)}</p>
+      </div>
+    </div>`;
+
+  $('problemCount').textContent = addressable.length ? `${addressable.length} the planner can act on` : 'none outstanding';
+  $('problemList').innerHTML = addressable.length
+    ? addressable.map(problemCard).join('')
+    : `<div class="resolved"><strong>No slotting problems outstanding.</strong>
+       <p>Class A demand is served from the forward pick face and the average pick trip is within target.</p></div>`;
+  $('noteList').innerHTML = notes.length ? notes.map(problemCard).join('') : empty('Nothing outstanding.');
+
+  const fix = $('fixWithAi');
+  fix.disabled = addressable.length === 0;
+  fix.textContent = addressable.length ? 'Fix with AI' : 'Nothing to fix';
 
   $('zoneList').innerHTML = data.zones.map((zone) => `
     <div class="zone">
@@ -158,7 +168,16 @@ async function loadRun() {
 function renderRun(run) {
   $('startRun').classList.toggle('hidden', run.status === 'RUNNING' || run.status === 'HALTED');
   $('startRun').textContent = run.status === 'COMPLETE' ? 'Run again' : 'Start run';
-  $('toPlan').classList.toggle('hidden', run.status !== 'COMPLETE');
+  const solvedNothing = run.status === 'COMPLETE' && (run.moves || []).length === 0;
+  $('toPlan').classList.toggle('hidden', run.status !== 'COMPLETE' || solvedNothing);
+
+  const optimal = $('optimalNotice');
+  optimal.classList.toggle('hidden', !solvedNothing);
+  if (solvedNothing) {
+    optimal.innerHTML = `<strong>No move would shorten travel.</strong>
+      <p>cuOpt solved the model and every relocation it could make costs more than it saves,
+      so the layout is already the best available for the current demand and move cap.</p>`;
+  }
 
   const halt = $('haltNotice');
   if (run.status === 'HALTED' && run.halted_on) {
@@ -285,7 +304,7 @@ function renderPlan(run) {
           </td>
         </tr>`;
       }).join('')
-    : `<tr><td colspan="7">${esc('No moves. Run the orchestration to produce a plan.')}</td></tr>`;
+    : `<tr><td colspan="7">${esc('cuOpt returned no move that shortens travel. Run the orchestration from the dashboard when the warehouse changes.')}</td></tr>`;
 }
 
 async function decide(moveId, value) {
@@ -422,6 +441,13 @@ $('fixWithAi').addEventListener('click', async () => {
   try {
     await api('/api/run/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
     startPolling();
+  } catch (error) { showBanner(error.message); }
+});
+
+$('resetDemo').addEventListener('click', async () => {
+  try {
+    await api('/api/reset', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+    navigate('/');
   } catch (error) { showBanner(error.message); }
 });
 

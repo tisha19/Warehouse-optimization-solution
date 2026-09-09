@@ -9,6 +9,7 @@ reason and the UI reports it.
 from __future__ import annotations
 
 import json
+import random
 import threading
 import time
 import urllib.error
@@ -47,23 +48,34 @@ def _now() -> str:
 
 class ShowcaseController:
     def __init__(self, seed: int | None = None, workflow_factory: Callable[..., Any] = ProductionWarehouseWorkflow):
-        self.enterprise = MockServiceState(resolve_seed(seed))
+        self.workflow_factory = workflow_factory
         self.config = ProductionConfig.from_env()
         self.goal = GOAL
         self.constraints: Dict[str, Any] = {"max_moves": 10, "locked_skus": [], "cold_chain_locked": True, "execution_windows": ["low-volume shifts"]}
         self._lock = threading.Lock()
-        self.run_state: Dict[str, Any] = self._idle_run()
-        self.decisions: Dict[str, str] = {}
-        self.commit_history: List[Dict[str, Any]] = []
-        self.commit_state: Dict[str, Any] = {"status": "IDLE", "service": "write_wms", "error": None, "commit": None}
-        self.baseline_kpis: Optional[Dict[str, Any]] = None
-        self.workflow = workflow_factory(
+        self._load(resolve_seed(seed))
+
+    def _load(self, seed: int) -> None:
+        self.seed = seed
+        self.enterprise = MockServiceState(seed)
+        self.run_state = self._idle_run()
+        self.decisions = {}
+        self.commit_history = []
+        self.commit_state = {"status": "IDLE", "service": "write_wms", "error": None, "commit": None}
+        self.baseline_kpis = None
+        self.workflow = self.workflow_factory(
             config=self.config,
             wms=SyntheticWMSAdapter(self.enterprise),
             erp=SyntheticERPAdapter(self.enterprise),
             forecast=SyntheticForecastAdapter(self.enterprise),
             on_event=self._on_workflow_event,
         )
+
+    def reset(self) -> Dict[str, Any]:
+        """Generate a different warehouse and forget everything about the last one."""
+        with self._lock:
+            self._load(random.SystemRandom().randrange(1, 2**31))
+        return self.dashboard()
 
     # ---------------------------------------------------------------- dashboard
 
@@ -111,6 +123,7 @@ class ShowcaseController:
             },
             "services": self.service_status(),
             "commits": self.commit_history[-5:],
+            "dataset_seed": self.seed,
             "run": {"id": self.run_state.get("id"), "status": self.run_state.get("status")},
             "generated_at": _now(),
         }

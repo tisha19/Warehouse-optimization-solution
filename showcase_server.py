@@ -52,6 +52,8 @@ class WarehouseIQHandler(SimpleHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/api/run/start":
             self.execute(self.controller.start_run)
+        elif path == "/api/reset":
+            self.execute(self.controller.reset)
         elif path == "/api/plan/decide":
             self.execute(lambda: self.controller.decide(str(payload.get("move_id", "")), str(payload.get("decision", ""))))
         elif path == "/api/plan/commit":

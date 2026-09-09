@@ -78,9 +78,12 @@ def _build_inputs(request: SlottingRequest) -> Tuple[List[Dict[str, Any]], List[
             totals[key] = totals.get(key, 0.0) + float(row.get("forecast_qty", 0.0))
 
     current_slot: Dict[str, str] = {}
+    sku_by_slot: Dict[str, str] = {}
     for row in wms.get("slot_occupancy", []):
         sku_id = str(row.get("sku_id"))
-        current_slot.setdefault(sku_id, str(row.get("slot_id")))
+        slot_id = str(row.get("slot_id"))
+        current_slot.setdefault(sku_id, slot_id)
+        sku_by_slot[slot_id] = sku_id
 
     locked = {str(item) for item in request.constraints.get("locked_skus", [])}
     cold_locked = bool(request.constraints.get("cold_chain_locked", True))
@@ -97,8 +100,13 @@ def _build_inputs(request: SlottingRequest) -> Tuple[List[Dict[str, Any]], List[
     movable.sort(key=lambda row: row["_picks"], reverse=True)
     candidates = movable[:MAX_CANDIDATES]
 
-    layout.sort(key=lambda row: float(row.get("distance_to_picking_m", 0.0)))
-    slots = layout[: max(len(candidates), 1)]
+    # Only offer slots that are free or already held by a SKU in this problem.
+    # Assigning into someone else's slot displaces stock the model never priced,
+    # which both overstates the gain and leaves the layout improvable forever.
+    candidate_ids = {str(sku.get("sku_id")) for sku in candidates}
+    available = [row for row in layout if sku_by_slot.get(str(row.get("slot_id")), "") in ("", *candidate_ids)]
+    available.sort(key=lambda row: float(row.get("distance_to_picking_m", 0.0)))
+    slots = available[: max(len(candidates), 1)]
 
     max_moves = int(request.constraints.get("max_moves", 10))
     return candidates, slots, current_slot, max_moves, movable

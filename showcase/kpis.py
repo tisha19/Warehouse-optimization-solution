@@ -74,13 +74,18 @@ def warehouse_kpis(source: Mapping[str, Any], horizon_days: int = 7) -> Dict[str
 
 
 def detect_problems(kpis: Mapping[str, Any], source: Mapping[str, Any]) -> List[Dict[str, Any]]:
-    """Findings stated as measured facts, each with the number behind it."""
+    """Findings stated as measured facts, each with the number behind it.
+
+    ``addressable`` marks the ones a slotting run can actually change; the rest
+    are operational notes that will still be true after a plan is committed.
+    """
     problems: List[Dict[str, Any]] = []
     coverage = float(kpis["forward_pick_coverage_pct"])
     if coverage < 60:
         problems.append({
             "id": "forward-pick-coverage",
             "severity": "high" if coverage < 30 else "medium",
+            "addressable": True,
             "title": "Fast-moving stock is not in the forward pick face",
             "detail": f"Only {coverage}% of class A demand is picked from zone A. The rest is walked to from reserve.",
             "metric": f"{coverage}%",
@@ -89,6 +94,7 @@ def detect_problems(kpis: Mapping[str, Any], source: Mapping[str, Any]) -> List[
         problems.append({
             "id": "travel-per-pick",
             "severity": "high",
+            "addressable": True,
             "title": "Average pick trip is long",
             "detail": f"Each pick walks {kpis['avg_distance_per_pick_m']}m round trip, {kpis['daily_travel_km']}km per day across the operation.",
             "metric": f"{kpis['avg_distance_per_pick_m']}m",
@@ -97,16 +103,18 @@ def detect_problems(kpis: Mapping[str, Any], source: Mapping[str, Any]) -> List[
         problems.append({
             "id": "below-reorder",
             "severity": "medium",
+            "addressable": False,
             "title": "Lines are below their reorder point",
-            "detail": f"{kpis['lines_below_reorder']} SKUs sit below reorder point and depend on inbound arriving on time.",
+            "detail": f"{kpis['lines_below_reorder']} SKUs sit below reorder point and depend on inbound arriving on time. Replenishment, not slotting, resolves this.",
             "metric": str(kpis["lines_below_reorder"]),
         })
     if int(kpis["blocked_slots"]) > 0:
         problems.append({
             "id": "blocked-slots",
             "severity": "low",
+            "addressable": False,
             "title": "Slots are out of service",
-            "detail": f"{kpis['blocked_slots']} slots are blocked for maintenance and excluded from slotting.",
+            "detail": f"{kpis['blocked_slots']} slots are blocked for maintenance and excluded from slotting. Maintenance resolves this.",
             "metric": str(kpis["blocked_slots"]),
         })
     return problems
