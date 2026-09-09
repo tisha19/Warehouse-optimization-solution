@@ -69,6 +69,7 @@ class ProductionConfig:
     nim_cloud_fallback: bool = _env("NIM_CLOUD_FALLBACK", "true").lower() == "true"
     cuopt_url: str = _env("CUOPT_URL", "", aliases=("CUOPT_SELF_HOSTED_URL", "NVIDIA_CUOPT_URL"))
     guardrails_url: str = _env("NEMO_GUARDRAILS_URL", "", aliases=("RAIL_API_URL",))
+    guardrails_config_id: str = _env("NEMO_GUARDRAILS_CONFIG_ID", "warehouse")
     openshell_url: str = _env("OPENSHELL_URL", "")
     approval_store: str = _env("APPROVAL_STORE", "approvals.json")
     request_timeout_seconds: float = float(_env("AGENT_REQUEST_TIMEOUT_SECONDS", "30"))

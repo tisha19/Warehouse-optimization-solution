@@ -7,6 +7,7 @@ import os
 from typing import Any, Callable, Dict, List, TypedDict
 
 from agents.digest import warehouse_digest
+from agents.parsing import json_from_response
 from agents.specialists import NemotronSpecialistRunner
 from services.config import ProductionConfig
 from services.enterprise import ERPAdapter, ForecastAdapter, WMSAdapter
@@ -111,11 +112,7 @@ class ProductionWarehouseWorkflow:
         if not guardrail.allowed:
             raise PermissionError(guardrail.reason)
         response = self.nim.chat([{"role": "system", "content": "You plan warehouse slotting. You are given an aggregated summary, not raw records; the solver holds the full data. Return only JSON with objectives, weights and binding constraints."}, {"role": "user", "content": json.dumps(prompt, default=str)}])
-        content = response.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-        try:
-            plan = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise ValueError("NIM returned a non-JSON plan") from exc
+        plan = json_from_response(response, "plan")
         return {"plan": plan}
 
     def _specialists(self, state: WarehouseState) -> Dict[str, Any]:

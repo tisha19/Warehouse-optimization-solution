@@ -4,6 +4,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Iterable
 
+from agents.parsing import json_from_response
 from services.nvidia import NIMClient
 
 
@@ -19,11 +20,7 @@ class NemotronSpecialistRunner:
                 {"role": "user", "content": json.dumps(payload, default=str)},
             ],
         )
-        content = response.get("choices", [{}])[0].get("message", {}).get("content") or "{}"
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"NIM returned a non-JSON response for {agent_name}") from exc
+        return json_from_response(response, f"response for {agent_name}")
 
     def __call__(self, state: Dict[str, Any]) -> Dict[str, Any]:
         payload = {"goal": state.get("business_goal"), "warehouse_summary": state.get("data_digest", {}), "policies": state.get("policy_documents", [])}

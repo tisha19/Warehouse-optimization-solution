@@ -1,5 +1,6 @@
 """NVIDIA NIM, cuOpt, and Guardrails clients."""
 
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -60,18 +61,36 @@ class PolicyDecision:
 
 
 class GuardrailsClient:
+    """Screens planner input and output through the self-hosted NeMo Guardrails service."""
+
     def __init__(self, config: ProductionConfig):
         self.client = JsonHttpClient(config.guardrails_url, config.request_timeout_seconds, config.nim_api_key) if config.guardrails_url else None
+        self.config_id = config.guardrails_config_id
+        self.model = config.nim_model
 
     def validate(self, stage: str, payload: Mapping[str, Any]) -> PolicyDecision:
         if self.client:
             try:
-                result = self.client.post("validate", {"stage": stage, "payload": payload})
-                return PolicyDecision(bool(result.get("allowed")), result.get("reason", ""), result.get("policy_id", "nemo-guardrails"))
+                result = self.client.post("v1/guardrail/checks", self._request(stage, payload))
             except ServiceError:
                 # An unreachable guardrails service must not disable policy enforcement.
                 return self._local_baseline(stage, payload)
+            status = str(result.get("status", ""))
+            if not status:
+                return self._local_baseline(stage, payload)
+            reason = json.dumps(result.get("rails_status") or {}, sort_keys=True)
+            return PolicyDecision(status == "success", f"NeMo Guardrails {status}: {reason}", "nemo-guardrails")
         return self._local_baseline(stage, payload)
+
+    def _request(self, stage: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        # The output rails only fire on an assistant turn, the input rails on a user turn.
+        role = "assistant" if stage == "output" else "user"
+        return {
+            "model": self.model,
+            "messages": [{"role": role, "content": json.dumps(payload, default=str)}],
+            # The service ignores a top-level config_id and silently runs no rails.
+            "guardrails": {"config_id": self.config_id},
+        }
 
     @staticmethod
     def _local_baseline(stage: str, payload: Mapping[str, Any]) -> PolicyDecision:
