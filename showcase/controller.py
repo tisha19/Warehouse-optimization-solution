@@ -8,15 +8,15 @@ from typing import Any, Callable, Dict, Mapping
 
 from agents.workflow import ProductionWarehouseWorkflow
 from mocks.enterprise_adapters import SyntheticERPAdapter, SyntheticForecastAdapter, SyntheticWMSAdapter
-from mocks.enterprise_services import MockServiceState
+from mocks.enterprise_services import MockServiceState, resolve_seed
 from services.config import ProductionConfig
 
 REQUIRED_LIVE_ENV = ("NIM_BASE_URL", "CUOPT_URL", "NEMO_GUARDRAILS_URL")
 
 
 class ShowcaseController:
-    def __init__(self, seed: int = 7, workflow_factory: Callable[..., Any] = ProductionWarehouseWorkflow):
-        self.enterprise = MockServiceState(seed)
+    def __init__(self, seed: int | None = None, workflow_factory: Callable[..., Any] = ProductionWarehouseWorkflow):
+        self.enterprise = MockServiceState(resolve_seed(seed))
         self.config = ProductionConfig.from_env()
         self.workflow = workflow_factory(
             config=self.config,

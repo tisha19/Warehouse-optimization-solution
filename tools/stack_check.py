@@ -14,7 +14,7 @@ import time
 
 from agents.workflow import ProductionWarehouseWorkflow
 from mocks.enterprise_adapters import SyntheticERPAdapter, SyntheticForecastAdapter, SyntheticWMSAdapter
-from mocks.enterprise_services import MockServiceState
+from mocks.enterprise_services import MockServiceState, resolve_seed
 from services.config import ProductionConfig
 
 GOAL = "Prepare a seven-day promotion plan. Keep moves below 10, lock cold-chain inventory, and prioritize picker travel."
@@ -32,7 +32,7 @@ def main() -> int:
 
     # WMS/ERP/forecast are still synthetic, so feed the workflow the same
     # adapters the UI uses instead of the unconfigured HTTP endpoints.
-    enterprise = MockServiceState(7)
+    enterprise = MockServiceState(resolve_seed())
     workflow = ProductionWarehouseWorkflow(
         config=config,
         wms=SyntheticWMSAdapter(enterprise),

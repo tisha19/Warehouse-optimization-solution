@@ -64,7 +64,7 @@ def _daily_picks(sku: Mapping[str, Any], horizon_days: int, forecast_by_sku: Map
     return float(sku.get("base_velocity", 0.0))
 
 
-def _build_inputs(request: SlottingRequest) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, str], int]:
+def _build_inputs(request: SlottingRequest) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, str], int, List[Dict[str, Any]]]:
     source = request.source_data or {}
     wms = source.get("wms", {})
     layout = [row for row in wms.get("warehouse_layout", []) if str(row.get("operational_status", "ACTIVE")).upper() == "ACTIVE"]
@@ -95,13 +95,13 @@ def _build_inputs(request: SlottingRequest) -> Tuple[List[Dict[str, Any]], List[
         movable.append({**sku, "_picks": _daily_picks(sku, request.planning_horizon_days, totals)})
 
     movable.sort(key=lambda row: row["_picks"], reverse=True)
-    movable = movable[:MAX_CANDIDATES]
+    candidates = movable[:MAX_CANDIDATES]
 
     layout.sort(key=lambda row: float(row.get("distance_to_picking_m", 0.0)))
-    slots = layout[: max(len(movable), 1)]
+    slots = layout[: max(len(candidates), 1)]
 
     max_moves = int(request.constraints.get("max_moves", 10))
-    return movable, slots, current_slot, max_moves
+    return candidates, slots, current_slot, max_moves, movable
 
 
 def _assignment_lp(skus: List[Dict[str, Any]], slots: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -198,7 +198,7 @@ def health() -> Dict[str, str]:
 
 @app.post("/solve/slotting")
 def solve_slotting(request: SlottingRequest) -> Dict[str, Any]:
-    skus, slots, current_slot, max_moves = _build_inputs(request)
+    skus, slots, current_slot, max_moves, all_movable = _build_inputs(request)
     if not skus or not slots:
         raise HTTPException(status_code=422, detail="source_data lacked usable SKU master or warehouse layout")
 
@@ -245,9 +245,18 @@ def solve_slotting(request: SlottingRequest) -> Dict[str, Any]:
             "type": "travel",
         })
 
-    baseline = sum(float(sku["_picks"]) * distance_by_slot.get(origin, 0.0) for _, sku, _, origin in selected)
-    optimised = sum(float(sku["_picks"]) * float(slot.get("distance_to_picking_m", 0.0)) for _, sku, slot, _ in selected)
-    reduction = 0.0 if baseline <= 0 else max(0.0, min(100.0, (1.0 - optimised / baseline) * 100.0))
+    # Report the saving against the travel the whole warehouse does today, not
+    # just against the handful of lines that move, or the number reads as if
+    # every pick got shorter.
+    saving = sum(
+        float(sku["_picks"]) * (distance_by_slot.get(origin, 0.0) - float(slot.get("distance_to_picking_m", 0.0)))
+        for _, sku, slot, origin in selected
+    )
+    warehouse_travel = sum(
+        float(sku["_picks"]) * distance_by_slot.get(current_slot.get(str(sku.get("sku_id")), ""), 0.0)
+        for sku in all_movable
+    )
+    reduction = 0.0 if warehouse_travel <= 0 else max(0.0, min(100.0, saving / warehouse_travel * 100.0))
 
     return {
         "headline": "cuOpt constrained slotting plan",
@@ -256,7 +265,7 @@ def solve_slotting(request: SlottingRequest) -> Dict[str, Any]:
             "travel_reduction_pct": round(reduction, 1),
             "replenishment_reduction_pct": round(reduction / 2.0, 1),
             "constraint_violations": 0,
-            "plan_value": round(baseline - optimised, 2),
+            "plan_value": round(saving, 2),
         },
         "explanation": f"cuOpt solved a {len(skus)}x{len(slots)} assignment model and returned {len(moves)} feasible moves within the move cap of {max_moves}.",
     }
