@@ -11,14 +11,15 @@ from typing import Any, Callable, Dict
 from showcase.controller import ShowcaseController
 
 ROOT = Path(__file__).parent
+WEB_DIST = ROOT / "web" / "dist"
 CONTROLLER: ShowcaseController | None = None
 # Client-side routes have to fall through to the shell document.
-APP_ROUTES = {"/", "/orchestration", "/plan", "/openshell"}
+APP_ROUTES = {"/", "/cockpit", "/plan", "/workflow", "/openshell"}
 
 
 class WarehouseIQHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any):
-        super().__init__(*args, directory=str(ROOT / "showcase"), **kwargs)
+        super().__init__(*args, directory=str(WEB_DIST), **kwargs)
 
     @property
     def controller(self) -> ShowcaseController:
@@ -30,6 +31,8 @@ class WarehouseIQHandler(SimpleHTTPRequestHandler):
         path = self.path.split("?")[0]
         routes: Dict[str, Callable[[], Any]] = {
             "/api/dashboard": self.controller.dashboard,
+            "/api/layout": self.controller.layout,
+            "/api/demand": self.controller.demand,
             "/api/run": self.controller.run,
             "/api/plan/commit": self.controller.commit_status,
             "/api/openshell": self.controller.openshell_overview,
@@ -54,6 +57,8 @@ class WarehouseIQHandler(SimpleHTTPRequestHandler):
             self.execute(self.controller.start_run)
         elif path == "/api/reset":
             self.execute(self.controller.reset)
+        elif path == "/api/constraints":
+            self.execute(lambda: self.controller.set_constraints(payload))
         elif path == "/api/plan/decide":
             self.execute(lambda: self.controller.decide(str(payload.get("move_id", "")), str(payload.get("decision", ""))))
         elif path == "/api/plan/commit":
@@ -73,7 +78,7 @@ class WarehouseIQHandler(SimpleHTTPRequestHandler):
             self.send_json({"error": f"{type(exc).__name__}: {exc}"}, 502)
 
     def end_headers(self) -> None:
-        # The UI is redeployed in place, so a cached app.js must never win.
+        # The UI is redeployed in place, so a cached bundle must never win.
         self.send_header("Cache-Control", "no-store, must-revalidate")
         super().end_headers()
 
@@ -95,6 +100,10 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8090)
     parser.add_argument("--seed", default=None, help="Synthetic enterprise data seed, or 'random'")
     args = parser.parse_args()
+    if not (WEB_DIST / "index.html").exists():
+        raise SystemExit(
+            f"UI bundle missing at {WEB_DIST}. Build it first: cd web && npm ci && npm run build"
+        )
     global CONTROLLER
     CONTROLLER = ShowcaseController(seed=args.seed)
     server = ThreadingHTTPServer((args.host, args.port), WarehouseIQHandler)

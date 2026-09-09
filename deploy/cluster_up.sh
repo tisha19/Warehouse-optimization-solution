@@ -134,6 +134,18 @@ curl -s -X POST http://127.0.0.1:8003/v1/guardrail/configs -H 'Content-Type: app
 curl -s -X PATCH http://127.0.0.1:8003/v1/guardrail/configs/default/warehouse -H 'Content-Type: application/json' \
   -d @deploy/guardrails_warehouse_config.json -o /dev/null -w '  rails patch : %{http_code}\n'
 
+log "UI bundle"
+export PATH="$HOME/opt/node/bin:$PATH"
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm not found on PATH (expected \$HOME/opt/node/bin) - cannot build the UI" >&2
+  exit 1
+fi
+if [ web/dist/index.html -nt web/src ] && [ web/dist/index.html -nt web/package.json ]; then
+  echo "  bundle is current, skipping rebuild"
+else
+  ( cd web && { [ -d node_modules ] || npm ci --no-audit --no-fund; } && npm run build ) || exit 1
+fi
+
 log "planner UI"
 if ! skip_if_up "http://127.0.0.1:${APP_PORT:-8090}/api/dashboard" "planner UI"; then
   pkill -f 'showcase_server\.py' >/dev/null 2>&1

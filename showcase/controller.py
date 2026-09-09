@@ -22,9 +22,11 @@ from agents.workflow import ProductionWarehouseWorkflow
 from mocks.enterprise_adapters import SyntheticERPAdapter, SyntheticForecastAdapter, SyntheticWMSAdapter
 from mocks.enterprise_services import MockServiceState, resolve_seed
 from services.config import ProductionConfig
+from showcase.demand import daily_picks, demand_signal
 from showcase.kpis import detect_problems, warehouse_kpis
 
 ACTOR = "warehouse-planner"
+SITE = "DC-07 / North distribution centre"
 GOAL = (
     "Reduce picker travel over the next seven days. Stay within the move cap, keep cold-chain stock "
     "where it is, and prioritise the highest-demand lines."
@@ -51,7 +53,7 @@ class ShowcaseController:
         self.workflow_factory = workflow_factory
         self.config = ProductionConfig.from_env()
         self.goal = GOAL
-        self.constraints: Dict[str, Any] = {"max_moves": 10, "locked_skus": [], "cold_chain_locked": True, "execution_windows": ["low-volume shifts"]}
+        self.constraints: Dict[str, Any] = {"max_moves": 10, "locked_skus": [], "cold_chain_locked": True, "labour_minutes_per_window": 240, "execution_windows": ["low-volume shifts"]}
         self._lock = threading.Lock()
         self._load(resolve_seed(seed))
 
@@ -109,7 +111,7 @@ class ShowcaseController:
                 "distance": round(sum(float(row["distance_to_picking_m"]) for row in rows) / max(len(rows), 1)),
             })
         return {
-            "site": "DC-07 / North distribution centre",
+            "site": SITE,
             "kpis": kpis,
             "baseline": self.baseline_kpis,
             "problems": detect_problems(kpis, source),
@@ -127,6 +129,64 @@ class ShowcaseController:
             "run": {"id": self.run_state.get("id"), "status": self.run_state.get("status")},
             "generated_at": _now(),
         }
+
+    def layout(self) -> Dict[str, Any]:
+        """Slot geometry and what occupies each one, for the warehouse map."""
+        source = self._source_data()
+        wms = source["wms"]
+        sku_by_id = {str(row.get("sku_id")): row for row in source["erp"]["sku_master"]["sku_master"]}
+        picks = daily_picks(source)
+        occupant: Dict[str, Dict[str, Any]] = {}
+        for row in wms["slot_occupancy"]:
+            slot_id = str(row["slot_id"])
+            sku_id = str(row["sku_id"])
+            sku = sku_by_id.get(sku_id, {})
+            occupant[slot_id] = {
+                "sku_id": sku_id,
+                "product_name": sku.get("product_name", sku_id),
+                "abc_class": sku.get("abc_class", ""),
+                "quantity": int(row.get("quantity", 0)),
+                "picks_per_day": round(picks.get(sku_id, 0.0)),
+            }
+        slots = [
+            {
+                "slot_id": str(row["slot_id"]),
+                "zone": chr(64 + int(row["zone_id"])),
+                "zone_id": int(row["zone_id"]),
+                "aisle": int(row.get("aisle", 1)),
+                "bay": int(row.get("bay", 1)),
+                "level": int(row.get("level", 1)),
+                "distance_m": float(row.get("distance_to_picking_m", 0.0)),
+                "status": str(row.get("operational_status", "ACTIVE")),
+                "temperature_controlled": bool(row.get("temperature_controlled")),
+                "occupant": occupant.get(str(row["slot_id"])),
+            }
+            for row in wms["warehouse_layout"]
+        ]
+        return {
+            "site": SITE,
+            "slots": slots,
+            "aisles_per_zone": max((slot["aisle"] for slot in slots), default=1),
+            "bays_per_aisle": max((slot["bay"] for slot in slots), default=1),
+            "levels_per_bay": max((slot["level"] for slot in slots), default=1),
+            "forward_pick_zone": "A",
+            "moves": self.run_state.get("moves", []),
+        }
+
+    def demand(self) -> Dict[str, Any]:
+        return demand_signal(self._source_data())
+
+    def set_constraints(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        """Planner-editable limits; the next run hands these to cuOpt."""
+        if "max_moves" in payload:
+            self.constraints["max_moves"] = max(1, min(40, int(payload["max_moves"])))
+        if "cold_chain_locked" in payload:
+            self.constraints["cold_chain_locked"] = bool(payload["cold_chain_locked"])
+        if "locked_skus" in payload:
+            self.constraints["locked_skus"] = sorted({str(sku) for sku in payload["locked_skus"]})
+        if "labour_minutes_per_window" in payload:
+            self.constraints["labour_minutes_per_window"] = max(30, min(960, int(payload["labour_minutes_per_window"])))
+        return dict(self.constraints)
 
     def service_status(self) -> List[Dict[str, Any]]:
         return [
@@ -326,6 +386,7 @@ class ShowcaseController:
             "reason": str(raw.get("reason", "")),
             "benefit_hours_per_day": round(float(raw.get("benefit_hours_per_day", 0.0)), 2),
             "labor_minutes": int(raw.get("labor_minutes", 0)),
+            "alternatives": list(raw.get("alternatives") or []),
         }
 
     def _snapshot(self) -> Dict[str, Any]:

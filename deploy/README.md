@@ -21,6 +21,31 @@ sbatch deploy/slurm_stack.sbatch     # start everything
 `stack_status.sh` is safe to run from the login node and prints the node the stack
 landed on, taken from `deploy/state/stack.env`.
 
+### The UI is a build artefact
+
+The operator UI is a React + Vite app in `web/`, and `web/dist` is **not** committed.
+`cluster_up.sh` builds it automatically using the rootless Node install at
+`$HOME/opt/node/bin` (node 20 / npm 10). If that directory is missing, the stack
+refuses to start rather than serving a stale bundle. To rebuild by hand:
+
+```bash
+export PATH="$HOME/opt/node/bin:$PATH"
+cd web && npm ci && npm run build
+```
+
+### Rebuilding the cuOpt adapter
+
+The adapter runs as a rootless-docker container on the compute node, and neither
+`docker` nor the Slurm binaries are on the default non-interactive `PATH`:
+
+```bash
+export PATH=/cm/local/apps/slurm/current/bin:$PATH
+export SLURM_CONF=/cm/shared/apps/slurm/etc/slurm/slurm.conf
+srun --jobid=<JOBID> --overlap bash deploy/redeploy_adapter.sh
+```
+
+`redeploy_adapter.sh` discovers `DOCKER_HOST` from the running rootless daemon.
+
 ## Restarting / resuming
 
 | Situation | What to do |

@@ -43,6 +43,10 @@ CUOPT_METHOD = int(os.getenv("CUOPT_METHOD", "2"))
 CUOPT_TIME_LIMIT = float(os.getenv("CUOPT_TIME_LIMIT_SECONDS", "30"))
 # Average picker walking speed, used to convert metres saved into hours saved.
 WALK_SPEED_MPS = float(os.getenv("PICKER_WALK_SPEED_MPS", "1.2"))
+# Fixed pick-and-put allowance per relocation, on top of the walking time.
+HANDLING_MINUTES = float(os.getenv("RELOCATION_HANDLING_MINUTES", "6"))
+DEFAULT_WINDOW_MINUTES = float(os.getenv("LABOUR_MINUTES_PER_WINDOW", "240"))
+ALTERNATIVES_PER_MOVE = int(os.getenv("CUOPT_ALTERNATIVES_PER_MOVE", "3"))
 
 app = FastAPI(title="Warehouse slotting adapter for cuOpt")
 
@@ -150,6 +154,32 @@ def _assignment_lp(skus: List[Dict[str, Any]], slots: List[Dict[str, Any]]) -> D
     }
 
 
+def _relocation_minutes(from_distance: float, to_distance: float) -> float:
+    """Two laden trips at walking pace, plus a fixed handling allowance."""
+    travel_seconds = (from_distance + to_distance) * 2 / WALK_SPEED_MPS
+    return HANDLING_MINUTES + travel_seconds / 60.0
+
+
+def _alternatives(sku: Mapping[str, Any], slots: List[Dict[str, Any]], chosen: Mapping[str, Any], from_distance: float) -> List[Dict[str, Any]]:
+    """The runner-up slots cuOpt passed over, with the gain each would have given."""
+    picks = float(sku["_picks"])
+    ranked = sorted(slots, key=lambda row: float(row.get("distance_to_picking_m", 0.0)))
+    out = []
+    for row in ranked:
+        slot_id = str(row.get("slot_id"))
+        if slot_id == str(chosen.get("slot_id")):
+            continue
+        distance = float(row.get("distance_to_picking_m", 0.0))
+        out.append({
+            "slot_id": slot_id,
+            "distance_m": distance,
+            "gain_metre_picks": round(picks * (from_distance - distance), 1),
+        })
+        if len(out) == ALTERNATIVES_PER_MOVE:
+            break
+    return out
+
+
 def _find_primal(payload: Any) -> Optional[List[float]]:
     """cuOpt nests the solution differently across versions, so search for it."""
     if isinstance(payload, dict):
@@ -236,20 +266,30 @@ def solve_slotting(request: SlottingRequest) -> Dict[str, Any]:
     candidates.sort(key=lambda item: item[0], reverse=True)
     selected = [item for item in candidates if item[0] > 0][:max_moves]
 
+    # Pack the moves into execution windows under the labour budget, best first.
+    # This is sequencing after the solve, not a multi-period optimisation.
+    budget = float(request.constraints.get("labour_minutes_per_window", DEFAULT_WINDOW_MINUTES))
+    window_index, window_used = 0, 0.0
+
     moves: List[Dict[str, Any]] = []
     for index, (gain, sku, slot, origin) in enumerate(selected):
+        labor_minutes = _relocation_minutes(distance_by_slot.get(origin, 0.0), float(slot.get("distance_to_picking_m", 0.0)))
+        if window_used + labor_minutes > budget and window_used > 0:
+            window_index += 1
+            window_used = 0.0
+        window_used += labor_minutes
         moves.append({
             "move_id": f"MV-{index + 1:03d}",
             "sku_id": str(sku.get("sku_id")),
             "product_name": sku.get("product_name", ""),
             "from_slot": origin,
             "to_slot": str(slot.get("slot_id")),
-            "day": index % max(request.planning_horizon_days, 1),
+            "day": min(window_index, max(request.planning_horizon_days - 1, 0)),
             "window": "Low-volume shift",
             "reason": f"cuOpt assigned this SKU ({round(float(sku['_picks']), 1)} picks/day) to a slot {slot.get('distance_to_picking_m')}m from the pick face.",
             "benefit_hours_per_day": round(gain / (WALK_SPEED_MPS * 3600.0), 2),
-            "labor_minutes": 10 + index * 2,
-            "confidence": 95,
+            "labor_minutes": round(labor_minutes),
+            "alternatives": _alternatives(sku, slots, slot, distance_by_slot.get(origin, 0.0)),
             "type": "travel",
         })
 

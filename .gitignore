@@ -19,3 +19,8 @@ approvals.json
 deploy/state/
 deploy/openshell/state/
 warehouse-stack-*.log
+
+# Built UI assets and dependencies
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo

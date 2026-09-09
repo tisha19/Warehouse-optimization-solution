@@ -1,0 +1,238 @@
+.wmap {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    padding: 14px 16px 12px;
+    gap: 10px;
+}
+
+.wmap__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex: 0 0 auto;
+}
+.wmap__title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: 0.02em;
+}
+.wmap__sub {
+    margin: 3px 0 0;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.wmap__tools {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+.wmap__toggle {
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 5px 10px;
+    border-radius: 14px;
+    border: 1px solid var(--border-card);
+    background: var(--bg-card);
+    color: var(--text-muted);
+}
+.wmap__toggle.is-on {
+    color: #dff0ff;
+    border-color: rgba(56, 189, 248, 0.55);
+    background: rgba(56, 189, 248, 0.14);
+}
+.wmap__legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--text-muted);
+}
+.wmap__key {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    display: inline-block;
+    margin-left: 8px;
+}
+.wmap__key--a {
+    background: #ef4444;
+}
+.wmap__key--b {
+    background: #fbbf24;
+}
+.wmap__key--c {
+    background: #3f5f86;
+}
+.wmap__key--move {
+    background: none;
+    border-top: 2px dashed #38bdf8;
+    height: 0;
+    border-radius: 0;
+    width: 14px;
+}
+.wmap__key--gap {
+    background: rgba(251, 191, 36, 0.2);
+    border: 1.5px solid #fbbf24;
+}
+
+.wmap__canvas {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: linear-gradient(160deg, #0a1120, #070c16);
+    padding: 6px;
+}
+.wmap__svg {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+}
+
+/* --- svg atoms --- */
+.wmap__docklabel {
+    fill: #9dc0f5;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-anchor: middle;
+}
+.wmap__zonelabel {
+    fill: #d9a93a;
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+}
+.wmap__aisle {
+    fill: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+}
+.wmap__aisledist {
+    fill: var(--text-muted);
+    font-size: 7.5px;
+}
+.wmap__binlabel {
+    fill: #0a0e1a;
+    font-size: 7px;
+    font-weight: 800;
+    pointer-events: none;
+}
+
+.wmap__bin {
+    fill: #16223a;
+    stroke: #23375a;
+    stroke-width: 0.8;
+    transition:
+        fill 0.25s,
+        stroke 0.25s;
+}
+.wmap__bin--a {
+    fill: #ef4444;
+    stroke: #ff7b7b;
+}
+.wmap__bin--b {
+    fill: #fbbf24;
+    stroke: #ffd873;
+}
+.wmap__bin--c {
+    fill: #3f5f86;
+    stroke: #557ba8;
+}
+.wmap__bin--chill {
+    stroke: #4fd1e0;
+    stroke-dasharray: 3 2;
+}
+.wmap__bin.is-source {
+    stroke: #f87171;
+    stroke-width: 1.6;
+}
+.wmap__bin.is-target {
+    stroke: #34d399;
+    stroke-width: 1.6;
+}
+/* Pre-run: this face disagrees with the incoming demand signal */
+.wmap__bin.is-gap {
+    stroke: #fbbf24;
+    stroke-width: 1.8;
+    animation: wmapGap 1.8s ease-in-out infinite;
+}
+@keyframes wmapGap {
+    0%,
+    100% {
+        stroke-opacity: 1;
+    }
+    50% {
+        stroke-opacity: 0.4;
+    }
+}
+
+.wmap__movehit {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 11;
+    cursor: pointer;
+}
+
+.wmap__move {
+    fill: none;
+    stroke: #38bdf8;
+    stroke-width: 1.6;
+    stroke-dasharray: 5 4;
+    opacity: 0.75;
+    cursor: pointer;
+    pointer-events: none;
+    animation: wmapDash 1.4s linear infinite;
+}
+.wmap__movehit:hover + .wmap__move {
+    opacity: 1;
+    stroke-width: 2.4;
+}
+.wmap__move.is-selected {
+    stroke: #fbbf24;
+    stroke-width: 2.4;
+    opacity: 1;
+    filter: drop-shadow(0 0 6px rgba(251, 191, 36, 0.55));
+}
+.wmap__move.is-blocked {
+    stroke: #f87171;
+    stroke-dasharray: 2 5;
+    animation: none;
+    opacity: 0.6;
+}
+
+@keyframes wmapDash {
+    to {
+        stroke-dashoffset: -18;
+    }
+}
+
+.wmap__foot {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+    font-size: 10.5px;
+    color: var(--text-muted);
+}
+.wmap__footitem b {
+    color: var(--text-primary);
+}
+.wmap__footitem--hint {
+    margin-left: auto;
+    color: var(--accent-cyan);
+}
+.wmap__footitem--warn {
+    margin-left: auto;
+    color: var(--status-amber);
+    font-weight: 600;
+}

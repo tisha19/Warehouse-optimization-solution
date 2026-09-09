@@ -1,243 +1,148 @@
-# Hackathon Live Demo Guide
+# WarehouseIQ Live Demo Guide
 
-## 1. Prepare the Environment
+WarehouseIQ is a governed, multi-agent warehouse slotting copilot. Everything on screen
+is produced by a live service call — there is no scripted path and no fallback data.
 
-Open a terminal in the project:
+## 1. Bring the stack up
 
-```bash
-cd "/Users/mainak.chatterjee/Library/CloudStorage/OneDrive-Personal/Carrier Journey/Projects/warehouse-optimization-platform"
-source .venv/bin/activate
-```
-
-Optionally verify the solution:
+On the cluster:
 
 ```bash
-python -m unittest discover -s tests -v
+cd ~/gsh-team07/Warehouse-optimization-solution
+sbatch deploy/slurm_stack.sbatch
+./deploy/stack_status.sh          # node + per-service health
 ```
 
-Expected result:
+Six services must report healthy: cuOpt (5000), the slotting adapter (8002),
+NeMo Guardrails (8003), the OpenShell governor (8004), the Nemotron NIM (8000),
+and the WarehouseIQ UI (8090).
 
-```text
-Ran 9 tests
-OK
-```
-
-## 2. Configure Real NVIDIA Services
-
-Populate your local `.env` or export the required variables:
+From your laptop:
 
 ```bash
-export NIM_BASE_URL="https://your-nim-endpoint/v1"
-export NIM_MODEL="your-nemotron-model"
-export NIM_API_KEY="your-api-key"
-
-export CUOPT_URL="https://your-cuopt-endpoint"
-export NEMO_GUARDRAILS_URL="https://your-guardrails-endpoint"
-export OPENSHELL_URL="https://your-openshell-endpoint"
+ssh -N -L 8090:<STACK_NODE>:8090 ssh.axisapps.io -l <your-access-key>
 ```
 
-Do not show credentials during the presentation.
+Open <http://127.0.0.1:8090> at a browser width above 1400px so both side rails stay visible.
 
-The showcase UI labels its built-in warehouse data as **Scenario Replay**. NVIDIA and cuOpt services are not mocked.
-
-## 3. Start the Showcase
+Optionally verify the backend first:
 
 ```bash
-python showcase_server.py --port 8080
+python -m unittest discover -s tests
 ```
 
-Open [http://127.0.0.1:8080](http://127.0.0.1:8080).
+## 2. Frame the problem (Cockpit)
 
-Use a browser width above `1100px` so the move-cap control and intelligence sidebar remain visible.
+Land on **Cockpit**. Three things are on screen, all live:
 
-## 4. Introduce the Problem
+- **Demand signal** (left rail) — the promoted line with the largest forecast impact,
+  its 14-day forecast sparkline with promotion days marked, and the top movers by
+  forecast picks per day.
+- **Warehouse map** (centre) — every real slot in the building, one rectangle each,
+  coloured by ABC class, with the dispatch dock and the golden zone marked.
+- **Warehouse today** (right rail) — picker travel, distance per pick, class-A
+  coverage of the forward pick face, and forecast picks per day.
 
 Suggested narration:
 
-> Warehouse demand changes faster than static slotting plans. Traditional tools tell planners where a SKU belongs, but not when to move it, how much disruption it causes, or whether the move can be executed safely.
+> This is a live distribution centre. The highest-demand line is on promotion and
+> sitting tens of metres from the pick face. Class-A coverage of the forward pick
+> zone is under ten percent — nearly every fast pick is a long walk into reserve.
 
-Then introduce Shiftwise:
+Point at **Slotting vs demand**. Note that some findings are flagged as not
+addressable by slotting — lines below reorder point and slots blocked for
+maintenance. The system is explicit about what it cannot fix.
 
-> Shiftwise converts changing demand into a safe, explainable, multi-day move plan with human approval before WMS execution.
+## 3. Set the constraints (Move Plan)
 
-## 5. Explain the Initial Scenario
+Go to **Move Plan**. The left rail is the constraint contract handed to the solver:
 
-Point out the planner instruction:
+- **Max moves per plan** — a hard cap cuOpt must respect.
+- **Labour budget per window** — moves are packed into execution windows under this budget.
+- **Lock cold-chain inventory** — no temperature-controlled SKU may be relocated.
+- **Lock a specific SKU** — pin the headline SKU where it is.
 
-```text
-Prepare a seven-day promotion plan. Keep moves below 10,
-lock cold-chain inventory, and prioritize picker travel.
-```
+These are not decoration. Changing one changes the problem sent to the solver.
 
-Explain the scenario:
+## 4. Run the agents (DeepAgent Run)
 
-- Sparkling Water demand has increased by 40%.
-- The SKU is currently far from dispatch.
-- Cold-chain inventory must remain locked.
-- Moves must occur during low-volume shifts.
-- The planner permits no more than ten moves.
+Press **Run DeepAgent** and switch to **DeepAgent Run**. The span waterfall streams:
 
-## 6. Show the Initial Plan
+`ingest → load_policies → plan → specialists → optimize → validate → create_approval`
 
-Highlight the top KPI band:
+Call out, in order:
 
-- **18.5%** picker-travel reduction
-- **12%** fewer replenishments
-- **74 minutes** of relocation work
-- **0** constraint violations
+- **plan** — Nemotron, served locally through NVIDIA NIM, writes the objective and
+  delegates. Its reasoning lines are shown verbatim.
+- **specialists** — demand, inventory, and warehouse agents run with their own
+  token and latency telemetry.
+- **optimize** — a formal constrained assignment problem goes to **NVIDIA cuOpt**.
+- **validate** — NeMo Guardrails checks the output stage.
 
-Emphasize that this is not merely a slot assignment. It is a seven-day execution plan.
+The right rail shows the run objective, the constraints in force, real token counts,
+and the cuOpt solve time and model size. The event log at the bottom is the raw trace.
 
-## 7. Show the Move Calendar
+Every privileged call in that trace was granted by the OpenShell governor. Nothing
+ran unchecked.
 
-Use the **Seven-day move calendar** to demonstrate:
+## 5. Review the plan (Move Plan)
 
-- Moves scheduled across multiple days
-- Specific shift windows
-- Travel, replenishment, and safety move categories
-- Empty days where disruption is intentionally avoided
+Back on **Move Plan** the solved state shows the travel reduction, the number of
+moves, and the execution windows the moves were packed into under the labour budget.
 
-Suggested narration:
+Expand any move in the manifest. You get:
 
-> The system determines not only where inventory should go, but when the warehouse can safely execute each move.
+- the plain-language reason cuOpt chose that slot,
+- the labour minutes the move costs,
+- the **alternatives considered** — the other candidate slots and the metre-picks
+  each would have saved.
 
-## 8. Explain the Top Recommendation
+Approve or reject moves individually, or use **Approve all**.
 
-Select or point to:
+## 6. Demonstrate governance (OpenShell)
 
-```text
-Sparkling Water 12pk
-B-12 -> A-03
-Tonight, 20:00-20:12
-```
+Press **Send to WMS**. The write does not happen. A banner reports that the call is
+**held by OpenShell** — `write_wms` is a per-call service, so every single write needs
+its own approval.
 
-Then read the **Nemotron rationale**:
-
-- Demand rises by 40%.
-- The new location is 62 metres closer to dispatch.
-- Expected benefit is 2.1 picker-hours per day.
-- Relocation requires only 12 minutes.
-- Confidence is 96%.
-
-Explain the technical separation:
-
-> Nemotron explains the decision, but it does not select the final location. cuOpt produces the constrained plan, and deterministic validation checks it.
-
-## 9. Show the Move Manifest
-
-Scroll to the **WMS-ready Move Manifest**.
-
-Highlight that each move contains:
-
-- Priority
-- Execution date and shift window
-- SKU
-- Source and destination
-- Decision evidence
-- Expected value
-- Labor requirement
-- Approval status
+Switch to **OpenShell**. The pending request is there. Approve it, return to the plan,
+and the write completes on its own.
 
 Suggested narration:
 
-> The output is immediately actionable. It can become a WMS task after planner approval.
+> The agent could not write to the warehouse system on its own authority. It asked,
+> it waited, and a human approved that specific call. Every decision is in the audit log.
 
-## 10. Show Warehouse Spatial Intelligence
+## 7. Show the outcome (Cockpit)
 
-Use the **Warehouse pressure map** to explain:
+Return to **Cockpit**. The KPIs have moved against the recorded baseline — picker
+travel and distance per pick fall, forward-pick coverage rises, and each card shows
+the delta. The map now reflects the new slotting.
 
-- Zone A is the forward-pick area.
-- Zone pressure and utilization vary.
-- Distance from dispatch is considered.
-- The optimizer balances proximity against capacity and operational constraints.
+## 8. Show the failure path
 
-## 11. Show the Multi-Agent Pipeline
+Optionally, stop a service and re-run. The UI reports the failure and shows no plan.
 
-Use the **DeepAgent trace** panel:
+> There is no fallback plan and no cached result. If the optimiser cannot run, you
+> are told, rather than shown a number nobody can stand behind.
 
-1. Demand Agent detects the promotion uplift.
-2. Inventory Agent identifies replenishment risks.
-3. Warehouse Agent finds feasible locations.
-4. Orchestrator combines evidence and invokes optimization.
+## 9. Close
 
-Then show the production service panel:
+- **Self-hosted NVIDIA stack** — Nemotron on NIM, cuOpt, and NeMo Guardrails all
+  running on the cluster, not called as SaaS.
+- **Governed autonomy** — OpenShell gates every privileged call, with per-call
+  approval on writes.
+- **Decisions, not dashboards** — a constrained, scheduled, WMS-ready move manifest
+  with the alternatives it was chosen over.
+- **No invented data** — every figure traces to a service response.
 
-- NVIDIA NIM
-- NeMo Retriever
-- NVIDIA cuOpt
-- NeMo Guardrails
-- OpenShell
+## Recommended timing
 
-A service displays **configured** when its environment URL exists.
-
-## 12. Demonstrate Planner Control
-
-This is the main demo moment.
-
-Change the planner instruction to:
-
-```text
-Lock Sparkling Water in B-12 and keep the plan under 6 moves
-```
-
-Set **Move cap** to `6`, then click the arrow button in the planner instruction field.
-
-Expected revised result:
-
-- Move count changes from **8 to 6**.
-- Travel reduction changes from **18.5% to 12.8%**.
-- Constraint violations remain **0**.
-- Sparkling Water disappears from the move manifest.
-- The explanation states that the SKU remains locked.
-
-Suggested narration:
-
-> The planner has overridden the highest-value move. The system respects that decision, re-optimizes the remaining plan, and explicitly quantifies the lost benefit.
-
-## 13. Demonstrate Approval
-
-In the Move Manifest, click **Review** on a move.
-
-The move changes to:
-
-```text
-Approved
-```
-
-Explain:
-
-> Recommendations are never written directly to the WMS. Each move requires human approval, Guardrails validation, and OpenShell authorization.
-
-The top **Review plan** button demonstrates opening the overall plan for supervisor review.
-
-## 14. Explain Production Execution
-
-Describe the controlled production path:
-
-```text
-Agent proposes
-    -> cuOpt finds a feasible plan
-    -> deterministic validators check constraints
-    -> NeMo Guardrails validates the output
-    -> OpenShell checks permissions
-    -> planner approves
-    -> approved tasks are written to the WMS
-```
-
-## 15. Close With the USP
-
-End with:
-
-> Shiftwise is not another static slotting optimizer. It is a disruption-aware, multi-period warehouse decision copilot that tells planners which SKUs to move, where, when, in what order, and why, while retaining human control over execution.
-
-## Recommended Demo Timing
-
-| Time | Segment |
+| Section | Minutes |
 |---|---|
-| 0:00-0:30 | Warehouse problem and product USP |
-| 0:30-1:15 | Initial scenario and KPI results |
-| 1:15-2:00 | Seven-day calendar and move manifest |
-| 2:00-2:40 | Nemotron explanation and agent trace |
-| 2:40-3:30 | Lock Sparkling Water and re-optimize |
-| 3:30-4:00 | Approval and WMS execution controls |
-| 4:00-4:30 | NVIDIA architecture and closing value |
+| Cockpit — the problem | 2 |
+| Constraints | 1 |
+| DeepAgent run | 3 |
+| Plan review | 2 |
+| OpenShell approval | 2 |
+| Outcome and close | 2 |

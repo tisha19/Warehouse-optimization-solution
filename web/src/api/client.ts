@@ -1,0 +1,225 @@
+/* Every shape here is what the Python service actually returns. */
+
+export type Kpis = {
+    daily_travel_km: number
+    avg_distance_per_pick_m: number
+    daily_picks: number
+    forward_pick_coverage_pct: number
+    slot_utilisation_pct: number
+    blocked_slots: number
+    lines_below_reorder: number
+}
+
+export type Problem = {
+    id: string
+    severity: 'high' | 'medium' | 'low'
+    addressable: boolean
+    title: string
+    detail: string
+    metric: string
+}
+
+export type Zone = { id: string; label: string; slots: number; utilisation: number; distance: number }
+
+export type Service = { name: string; endpoint: string; detail: string }
+
+export type Commit = { at: string; approval_id: string; moves: number; relocated: number; rejected: number }
+
+export type Dashboard = {
+    site: string
+    kpis: Kpis
+    baseline: Kpis | null
+    problems: Problem[]
+    zones: Zone[]
+    counts: Record<string, number>
+    services: Service[]
+    commits: Commit[]
+    dataset_seed: number
+    run: { id: string | null; status: RunStatus }
+    generated_at: string
+}
+
+export type Occupant = {
+    sku_id: string
+    product_name: string
+    abc_class: string
+    quantity: number
+    picks_per_day: number
+}
+
+export type Slot = {
+    slot_id: string
+    zone: string
+    zone_id: number
+    aisle: number
+    bay: number
+    level: number
+    distance_m: number
+    status: string
+    temperature_controlled: boolean
+    occupant: Occupant | null
+}
+
+export type Layout = {
+    site: string
+    slots: Slot[]
+    aisles_per_zone: number
+    bays_per_aisle: number
+    levels_per_bay: number
+    forward_pick_zone: string
+    moves: Move[]
+}
+
+export type Mover = {
+    sku_id: string
+    product_name: string
+    abc_class: string
+    slot: string
+    distance_m: number
+    picks_per_day: number
+    uplift_pct: number
+    promotion_uplift_pct: number
+    temperature_controlled: boolean
+}
+
+export type Demand = {
+    headline: (Mover & { series: { day: number; qty: number; promotion: boolean }[] }) | null
+    promoted_count: number
+    top_movers: Mover[]
+    horizon_days: number
+}
+
+export type Alternative = { slot_id: string; distance_m: number; gain_metre_picks: number }
+
+export type Move = {
+    id: string
+    priority: number
+    sku: string
+    code: string
+    abc_class: string
+    from_slot: string
+    to_slot: string
+    day: number
+    window: string
+    reason: string
+    benefit_hours_per_day: number
+    labor_minutes: number
+    alternatives: Alternative[]
+}
+
+export type RunStatus = 'IDLE' | 'RUNNING' | 'HALTED' | 'COMPLETE' | 'FAILED'
+
+export type Stage = { key: string; label: string; status: string; detail: string; duration_ms: number }
+
+export type Agent = {
+    name: string
+    role: 'supervisor' | 'specialist'
+    status: string
+    reasoning: string[]
+    findings: string[]
+    risks: string[]
+    telemetry: {
+        model?: string
+        endpoint?: string
+        duration_ms?: number
+        prompt_tokens?: number
+        completion_tokens?: number
+    }
+}
+
+export type RunEvent = { at: string; kind: string; stage: string; message: string }
+
+export type CuOpt = {
+    headline: string
+    explanation: string
+    metrics: Record<string, number>
+    telemetry: { endpoint?: string; duration_ms?: number; candidate_skus?: number; slots?: number }
+    move_count: number
+}
+
+export type Run = {
+    id: string | null
+    status: RunStatus
+    stages: Stage[]
+    events: RunEvent[]
+    agents: Agent[]
+    guardrails: { stage: string; allowed: boolean; policy_id: string; reason: string; at: string }[]
+    openshell: { service: string; actor: string; allowed: boolean; reason: string; at: string }[]
+    cuopt: CuOpt | null
+    plan: Record<string, unknown> | null
+    moves: Move[]
+    approval: { approval_id?: string; status?: string } | null
+    validation: Record<string, unknown> | null
+    error: string | null
+    halted_on: { service: string; reason: string } | null
+    started_at: string | null
+    finished_at: string | null
+    tokens: { prompt: number; completion: number; calls: number }
+    decisions: Record<string, 'pending' | 'approved' | 'rejected'>
+    constraints: Constraints
+    goal: string
+}
+
+export type Constraints = {
+    max_moves: number
+    locked_skus: string[]
+    cold_chain_locked: boolean
+    labour_minutes_per_window: number
+    execution_windows: string[]
+}
+
+export type CommitState = {
+    status: 'IDLE' | 'AWAITING_APPROVAL' | 'COMMITTED' | 'DENIED' | 'FAILED'
+    service: string
+    error: string | null
+    commit: Commit | null
+}
+
+export type GovernorService = { name?: string; service?: string; approval?: string; description?: string }
+export type Grant = { user: string; service: string; status?: string; calls?: number }
+export type PendingRequest = { id: string; user: string; service: string; operation?: string }
+export type AuditEntry = { at?: string; timestamp?: string; user: string; service: string; decision: string; source?: string }
+
+export type OpenShell = {
+    endpoint: string
+    services: GovernorService[]
+    grants: Grant[]
+    pending: PendingRequest[]
+    audit: AuditEntry[]
+    telemetry: {
+        models: { role: string; model: string; endpoint: string; calls: number; prompt_tokens: number; completion_tokens: number }[]
+        totals: { calls: number; prompt_tokens: number; completion_tokens: number }
+        commits: number
+    }
+}
+
+/** The service reports failures with a non-2xx status and {error}; nothing is substituted. */
+async function call<T>(path: string, init?: RequestInit): Promise<T> {
+    const response = await fetch(path, init)
+    const body = await response.json().catch(() => null)
+    if (!response.ok) {
+        const detail = (body as { error?: string } | null)?.error
+        throw new Error(detail || `${response.status} ${response.statusText}`)
+    }
+    return body as T
+}
+
+const post = <T,>(path: string, payload: unknown = {}): Promise<T> =>
+    call<T>(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+
+export const api = {
+    dashboard: () => call<Dashboard>('/api/dashboard'),
+    layout: () => call<Layout>('/api/layout'),
+    demand: () => call<Demand>('/api/demand'),
+    run: () => call<Run>('/api/run'),
+    startRun: () => post<Run>('/api/run/start'),
+    setConstraints: (patch: Partial<Constraints>) => post<Constraints>('/api/constraints', patch),
+    decide: (moveId: string, decision: 'approved' | 'rejected' | 'pending') =>
+        post<Run>('/api/plan/decide', { move_id: moveId, decision }),
+    commit: () => post<CommitState>('/api/plan/commit'),
+    commitStatus: () => call<CommitState>('/api/plan/commit'),
+    reset: () => post<Dashboard>('/api/reset'),
+    openshell: () => call<OpenShell>('/api/openshell'),
+    resolve: (requestId: string, approve: boolean) => post<OpenShell>('/api/openshell/resolve', { request_id: requestId, approve }),
+    revoke: (user: string, service: string) => post<OpenShell>('/api/openshell/revoke', { user, service }),
+}

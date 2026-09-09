@@ -1,0 +1,310 @@
+/* ===== Shared info-panel building blocks (left region cards) ===== */
+
+.panel {
+    padding: 14px 14px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.block__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+.block__title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.block__link {
+    font-size: 11px;
+    color: var(--accent-sky);
+    font-weight: 600;
+}
+.block__info-i {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    border: 1px solid var(--text-muted);
+    color: var(--text-muted);
+    font-size: 9px;
+    display: inline-grid;
+    place-items: center;
+}
+
+/* Generic card */
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-md);
+}
+
+/* Grid helpers */
+.grid {
+    display: grid;
+    gap: 8px;
+}
+.grid-4 {
+    grid-template-columns: repeat(4, 1fr);
+}
+.grid-3 {
+    grid-template-columns: repeat(3, 1fr);
+}
+.grid-2 {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+/* Stat card (asset health / bottom metrics) */
+.stat {
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-md);
+    padding: 9px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+.stat__top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 4px;
+}
+.stat__label {
+    font-size: 9.5px;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+}
+.stat__icon {
+    flex: 0 0 auto;
+    opacity: 0.9;
+}
+.stat__value {
+    font-size: 19px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.05;
+}
+.stat__value .unit {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-left: 3px;
+}
+.stat__delta {
+    font-size: 10px;
+    font-weight: 600;
+}
+.stat__delta.green {
+    color: var(--status-green);
+}
+.stat__delta.amber {
+    color: var(--status-amber);
+}
+.stat__delta.red {
+    color: var(--status-red);
+}
+.stat__sub {
+    font-size: 9px;
+    color: var(--text-faint);
+    color: #5a6c88;
+}
+
+/* Key/value rows */
+.kv {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 4px 0;
+    font-size: 11.5px;
+}
+.kv__label {
+    color: var(--text-muted);
+}
+.kv__value {
+    color: var(--text-primary);
+    font-weight: 600;
+    text-align: right;
+}
+.kv__value.red {
+    color: var(--status-red);
+}
+.kv__value.green {
+    color: var(--status-green);
+}
+
+/* Pills / badges */
+.pill {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 10px;
+    letter-spacing: 0.03em;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.pill--green {
+    color: var(--status-green);
+    background: rgba(52, 211, 153, 0.12);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+}
+.pill--blue {
+    color: var(--accent-sky);
+    background: rgba(59, 130, 246, 0.14);
+    border: 1px solid rgba(59, 130, 246, 0.34);
+}
+.pill--amber {
+    color: var(--status-amber);
+    background: rgba(251, 191, 36, 0.12);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+}
+.pill--red {
+    color: var(--status-red);
+    background: rgba(239, 68, 68, 0.14);
+    border: 1px solid rgba(239, 68, 68, 0.34);
+}
+.pill--muted {
+    color: var(--text-secondary);
+    background: rgba(111, 129, 158, 0.12);
+    border: 1px solid rgba(111, 129, 158, 0.3);
+}
+
+/* Shared status banner (reflects technician resolve/escalate on dashboard) */
+.status-banner {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+.status-banner b {
+    font-weight: 700;
+}
+.status-banner--resolved {
+    color: #6ee7b7;
+    background: rgba(52, 211, 153, 0.1);
+    border: 1px solid rgba(52, 211, 153, 0.4);
+}
+.status-banner--escalated {
+    color: #fcd34d;
+    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid rgba(251, 191, 36, 0.4);
+}
+.status-banner__icon {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+}
+
+.dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+}
+
+.check-ico {
+    color: var(--status-green);
+}
+
+/* ===== Loading / skeleton / fade-in helpers ===== */
+@keyframes shimmer {
+    0% {
+        background-position: -240px 0;
+    }
+    100% {
+        background-position: 240px 0;
+    }
+}
+.skel {
+    background: linear-gradient(90deg, #16233a 25%, #223450 50%, #16233a 75%);
+    background-size: 480px 100%;
+    animation: shimmer 1.25s infinite linear;
+    border-radius: 5px;
+}
+.skel-line {
+    height: 10px;
+    margin: 8px 0;
+}
+.skel-line.sm {
+    height: 8px;
+    width: 60%;
+}
+.skel-circle {
+    border-radius: 50%;
+}
+
+@keyframes fadeUp {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+.fade-in {
+    animation: fadeUp 0.5s ease both;
+}
+
+/* Animated typing dots */
+.loader-dots {
+    display: inline-flex;
+    gap: 5px;
+    align-items: center;
+}
+.loader-dots i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-cyan);
+    animation: blink 1.1s infinite ease-in-out both;
+}
+.loader-dots i:nth-child(2) {
+    animation-delay: 0.18s;
+}
+.loader-dots i:nth-child(3) {
+    animation-delay: 0.36s;
+}
+@keyframes blink {
+    0%,
+    75%,
+    100% {
+        opacity: 0.25;
+        transform: scale(0.85);
+    }
+    35% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Small spinner */
+.spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid rgba(56, 189, 248, 0.25);
+    border-top-color: var(--accent-cyan);
+    animation: spin 0.8s linear infinite;
+    flex: 0 0 auto;
+}
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
