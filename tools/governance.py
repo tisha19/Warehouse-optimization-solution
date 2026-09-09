@@ -25,14 +25,14 @@ class OpenShellPolicy:
     def __init__(self, config: ProductionConfig):
         self.endpoint = config.openshell_url.rstrip("/")
         self.timeout = config.request_timeout_seconds
-        self.allowed_tools = {"read_wms", "read_erp", "read_forecast", "load_policy", "solve_slotting", "create_approval", "write_wms"}
+        self.allowed_tools = {"read_wms", "read_erp", "read_forecast", "load_policy", "llm.supervisor", "llm.subagent", "solve_slotting", "create_approval", "write_wms"}
 
-    def authorize(self, tool_name: str, actor: str, approval_id: str = "") -> PolicyDecision:
+    def authorize(self, tool_name: str, actor: str, approval_id: str = "", wait_seconds: float = 0) -> PolicyDecision:
         local = self._local_allowlist(tool_name, approval_id, actor)
         # The local allowlist is a hard floor: the governor may only narrow it.
         if not local.allowed or not self.endpoint:
             return local
-        return self._gate(tool_name, actor) or local
+        return self._gate(tool_name, actor, wait_seconds) or local
 
     def _local_allowlist(self, tool_name: str, approval_id: str, actor: str) -> PolicyDecision:
         if tool_name not in self.allowed_tools:
@@ -41,9 +41,14 @@ class OpenShellPolicy:
             return PolicyDecision(False, "write_wms requires approval", "openshell-write-approval")
         return PolicyDecision(True, f"Authorized for actor {actor}", "openshell-local-policy")
 
-    def _gate(self, tool_name: str, actor: str) -> PolicyDecision | None:
-        """Returns None when the governor is unreachable so the local floor applies."""
-        payload = json.dumps({"user": actor, "service": tool_name, "operation": "call"}).encode()
+    def _gate(self, tool_name: str, actor: str, wait_seconds: float = 0) -> PolicyDecision | None:
+        """Returns None when the governor is unreachable so the local floor applies.
+
+        A per_call service parks a fresh request on every gate call, so retrying
+        after an approval never succeeds; such callers pass wait_seconds and let
+        the governor hold the call until an operator decides.
+        """
+        payload = json.dumps({"user": actor, "service": tool_name, "operation": "call", "wait_seconds": wait_seconds}).encode()
         request = urllib.request.Request(
             self.endpoint + "/api/v1/gate",
             data=payload,
@@ -51,7 +56,7 @@ class OpenShellPolicy:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(request, timeout=max(self.timeout, wait_seconds + 30)) as response:
                 verdict = json.loads(response.read().decode())
         except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError):
             return None

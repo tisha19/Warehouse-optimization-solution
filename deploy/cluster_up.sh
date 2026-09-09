@@ -135,10 +135,10 @@ curl -s -X PATCH http://127.0.0.1:8003/v1/guardrail/configs/default/warehouse -H
   -d @deploy/guardrails_warehouse_config.json -o /dev/null -w '  rails patch : %{http_code}\n'
 
 log "planner UI"
-if ! skip_if_up "http://127.0.0.1:${APP_PORT:-8090}/api/state" "planner UI"; then
+if ! skip_if_up "http://127.0.0.1:${APP_PORT:-8090}/api/dashboard" "planner UI"; then
   pkill -f 'showcase_server\.py' >/dev/null 2>&1
   nohup ./.venv/bin/python showcase_server.py --host 0.0.0.0 --port "${APP_PORT:-8090}" > /tmp/planner_ui.log 2>&1 &
-  wait_http "http://127.0.0.1:${APP_PORT:-8090}/api/state" 180 "planner UI"
+  wait_http "http://127.0.0.1:${APP_PORT:-8090}/api/dashboard" 180 "planner UI"
 fi
 
 log "stack up"

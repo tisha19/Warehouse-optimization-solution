@@ -25,5 +25,10 @@ class JsonHttpClient:
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
+        except urllib.error.HTTPError as exc:
+            # The body carries the reason the service refused; without it the
+            # caller only sees a status code.
+            detail = exc.read().decode("utf-8", "replace")[:400].strip()
+            raise ServiceError(f"POST {url} failed: {exc} {detail}".strip()) from exc
+        except (urllib.error.URLError, json.JSONDecodeError) as exc:
             raise ServiceError(f"POST {url} failed: {exc}") from exc

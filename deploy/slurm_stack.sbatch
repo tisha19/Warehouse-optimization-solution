@@ -38,7 +38,7 @@ while true; do
     echo "[stack] restarting openshell governor at $(date -Is)"
     OPENSHELL_GOVERNOR_PORT=8004 nohup ./.venv/bin/python -m services.openshell.governor > /tmp/governor.log 2>&1 &
   fi
-  if ! curl -sf -m 5 -o /dev/null "http://127.0.0.1:${APP_PORT:-8090}/api/state"; then
+  if ! curl -sf -m 5 -o /dev/null "http://127.0.0.1:${APP_PORT:-8090}/api/dashboard"; then
     echo "[stack] restarting planner UI at $(date -Is)"
     nohup ./.venv/bin/python showcase_server.py --host 0.0.0.0 --port "${APP_PORT:-8090}" > /tmp/planner_ui.log 2>&1 &
   fi

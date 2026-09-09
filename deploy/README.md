@@ -50,7 +50,7 @@ docker logs -f warehouse-nim-supervisor
 | OpenShell Governor | 8004 | `/api/v1/healthz` |
 | Nemotron 3 Ultra (supervisor) | 8000 | `/v1/health/ready` |
 | Nemotron 3.5 Lightning (sub-agent) | 8010 | `/v1/health/ready` |
-| Planner UI | 8090 | `/api/state` |
+| WarehouseIQ UI | 8090 | `/api/dashboard` |
 
 ## Viewing the UI from your laptop
 

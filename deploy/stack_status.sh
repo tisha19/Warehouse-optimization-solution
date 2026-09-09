@@ -15,4 +15,4 @@ probe "cuOpt adapter"    8002 /health
 probe "NeMo Guardrails"  8003 /v1/health
 probe "OpenShell"        8004 /api/v1/healthz
 probe "NIM (${STACK_NIM_PROFILE:-?})" "${STACK_NIM_PORT:-8000}" /v1/health/ready
-probe "Planner UI"       8090 /api/state
+probe "WarehouseIQ UI"    8090 /api/dashboard

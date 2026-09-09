@@ -315,6 +315,29 @@ class MockServiceState:
         rows = [row for row in self.data["forecast"] if row["forecast_day"] <= horizon_days]
         return {"forecast": rows, "horizon_days": horizon_days}
 
+    def apply_moves(self, moves: List[Mapping[str, Any]]) -> int:
+        """Relocate stock so a committed plan actually changes the warehouse."""
+        by_slot = {row["slot_id"]: row for row in self.data["occupancy"]}
+        zone_by_slot = {slot["slot_id"]: slot["zone_id"] for slot in self.data["warehouse_layout"]}
+        applied = 0
+        for move in moves:
+            source = str(move.get("from_slot") or move.get("from") or "")
+            target = str(move.get("to_slot") or move.get("to") or "")
+            row = by_slot.get(source)
+            if not row or target not in zone_by_slot:
+                continue
+            displaced = by_slot.get(target)
+            if displaced:
+                displaced["slot_id"], displaced["zone_id"] = source, zone_by_slot[source]
+                by_slot[source] = displaced
+            else:
+                by_slot.pop(source, None)
+            row["slot_id"], row["zone_id"] = target, zone_by_slot[target]
+            by_slot[target] = row
+            applied += 1
+        self.applied_moves.extend(moves)
+        return applied
+
 
 
 class MockHandler(BaseHTTPRequestHandler):

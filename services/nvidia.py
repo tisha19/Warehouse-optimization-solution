@@ -16,6 +16,9 @@ class NIMClient:
         self.model = model or config.nim_model
         self.fallback_model = cloud_model or config.nim_cloud_model or self.model
         self.active_endpoint = self.client.base_url
+        self.calls = 0
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
         self.fallback: Optional[JsonHttpClient] = None
         if config.nim_cloud_fallback and config.nim_cloud_api_key and config.nim_cloud_base_url.rstrip("/") != self.client.base_url:
             self.fallback = JsonHttpClient(config.nim_cloud_base_url, config.request_timeout_seconds, config.nim_cloud_api_key)
@@ -25,6 +28,15 @@ class NIMClient:
         """Specialists run on their own smaller NIM, which is a separate endpoint."""
         model = config.nim_subagent_model or config.nim_model
         return cls(config, base_url=config.nim_subagent_base_url or config.nim_base_url, model=model, cloud_model=model)
+
+    def _record(self, response: Mapping[str, Any]) -> Dict[str, int]:
+        usage = response.get("usage") or {}
+        prompt = int(usage.get("prompt_tokens", 0) or 0)
+        completion = int(usage.get("completion_tokens", 0) or 0)
+        self.calls += 1
+        self.prompt_tokens += prompt
+        self.completion_tokens += completion
+        return {"prompt_tokens": prompt, "completion_tokens": completion}
 
     def chat(self, messages: List[Mapping[str, str]], tools: Optional[List[Mapping[str, Any]]] = None, model: Optional[str] = None, json_only: bool = False) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"model": model or self.model, "messages": messages, "temperature": 0.1}
@@ -38,6 +50,7 @@ class NIMClient:
         try:
             response = self.client.post("chat/completions", payload)
             self.active_endpoint = self.client.base_url
+            self._record(response)
             return response
         except ServiceError:
             if not self.fallback:
@@ -45,6 +58,7 @@ class NIMClient:
             payload["model"] = self.fallback_model if model is None else model
             response = self.fallback.post("chat/completions", payload)
             self.active_endpoint = self.fallback.base_url
+            self._record(response)
             return response
 
 
