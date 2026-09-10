@@ -14,6 +14,11 @@ set -uo pipefail
 REPO="$HOME/gsh-team07/Warehouse-optimization-solution"
 cd "$REPO"
 
+# The monitor loop below shells out to docker, which is not on a batch job's
+# default PATH and answers on a per-user rootless socket.
+export PATH="/cm/shared/apps/rootless-docker/bin:$HOME/opt/node/bin:$PATH"
+export DOCKER_HOST=${DOCKER_HOST:-unix:///raid/docker/tmp/xdg_runtime_dir_$(id -u)/docker.sock}
+
 STACK_CONTAINERS="warehouse-nim warehouse-guardrails warehouse-cuopt-adapter warehouse-cuopt"
 cleanup(){ echo "[stack] shutting down"
   docker rm -f $STACK_CONTAINERS >/dev/null 2>&1
@@ -26,12 +31,16 @@ trap cleanup TERM EXIT
 echo "[stack] ready on $(hostname); holding allocation until the job ends"
 while true; do
   sleep 60
-  # Restart anything that died so a crash does not silently drain the stack.
+  # The rootless docker daemon is owned by this batch step, so if the containers
+  # have gone the whole stack is re-created rather than reported as down forever.
+  missing=0
   for c in $STACK_CONTAINERS; do
-    if ! docker ps --format '{{.Names}}' | grep -qx "$c"; then
-      echo "[stack] $c is down at $(date -Is)"
-    fi
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$c" || missing=1
   done
+  if [ "$missing" = 1 ]; then
+    echo "[stack] containers missing at $(date -Is) - re-running cluster_up.sh"
+    ./deploy/cluster_up.sh
+  fi
   # The Python services must be children of this batch step: anything launched
   # from an "srun --overlap" step is killed when that step exits.
   if ! curl -sf -m 5 -o /dev/null http://127.0.0.1:8004/api/v1/healthz; then

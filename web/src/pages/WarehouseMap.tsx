@@ -9,16 +9,16 @@ import './WarehouseMap.css'
    are drawn as arcs from source slot to target slot.
    --------------------------------------------------------------------------- */
 
-const BAY_W = 22
-const BAY_GAP = 2
-const LEVEL_H = 8
-const LEVEL_GAP = 1
-const AISLE_GAP = 14
-const ZONE_GAP = 26
-const ORIGIN_X = 104
-const ORIGIN_Y = 34
+const BAY_W = 26
+const BAY_GAP = 3
+const LEVEL_H = 13
+const LEVEL_GAP = 3
+const AISLE_GAP = 26
+const ZONE_GAP = 50
+const ORIGIN_X = 116
+const ORIGIN_Y = 54
 const DOCK_X = 26
-const DOCK_W = 40
+const DOCK_W = 44
 
 type Geometry = { aisles: number; bays: number; levels: number }
 
@@ -141,18 +141,41 @@ export default function WarehouseMap({ slots, moves, selectedMoveId, onSelectMov
                         GOLDEN ZONE
                     </text>
 
+                    {Array.from({ length: geo.aisles }, (_, index) => index + 1).map((aisle) => (
+                        <text
+                            key={`aisle-${aisle}`}
+                            x={bayX(aisle, 1, geo) + (geo.bays * (BAY_W + BAY_GAP) - BAY_GAP) / 2}
+                            y={ORIGIN_Y - 26}
+                            className="wmap__aislehead"
+                            textAnchor="middle"
+                        >
+                            AISLE {aisle}
+                        </text>
+                    ))}
+
                     {zones.map((zone, zoneIndex) => {
                         const y = zoneY(zoneIndex, geo)
                         const zoneSlots = slots.filter((s) => s.zone === zone)
                         const mean = zoneSlots.reduce((sum, s) => sum + s.distance_m, 0) / Math.max(zoneSlots.length, 1)
                         return (
                             <g key={zone}>
-                                <text x={ORIGIN_X - 16} y={y + 10} className="wmap__aisle" textAnchor="end">
+                                <text x={ORIGIN_X - 20} y={y + 12} className="wmap__aisle" textAnchor="end">
                                     {zone}
                                 </text>
-                                <text x={ORIGIN_X - 16} y={y + 22} className="wmap__aisledist" textAnchor="end">
+                                <text x={ORIGIN_X - 20} y={y + 25} className="wmap__aisledist" textAnchor="end">
                                     {Math.round(mean)}m
                                 </text>
+                                {Array.from({ length: geo.aisles }, (_, index) => index + 1).map((aisle) => (
+                                    <rect
+                                        key={`rack-${zone}-${aisle}`}
+                                        x={bayX(aisle, 1, geo) - 4}
+                                        y={y - 4}
+                                        width={geo.bays * (BAY_W + BAY_GAP) - BAY_GAP + 8}
+                                        height={zoneBandH + 6}
+                                        rx="5"
+                                        className="wmap__rack"
+                                    />
+                                ))}
                                 {zoneSlots.map((slot) => {
                                     const x = bayX(slot.aisle, slot.bay, geo)
                                     const sy = y + (slot.level - 1) * (LEVEL_H + LEVEL_GAP)
@@ -188,12 +211,17 @@ export default function WarehouseMap({ slots, moves, selectedMoveId, onSelectMov
                         const to = centre(move.to_slot)
                         if (!from || !to) return null
                         const selected = selectedMoveId === move.id
+                        const dimmed = selectedMoveId !== null && !selected
                         const midY = Math.min(from.cy, to.cy) - 22
                         const d = `M ${from.cx} ${from.cy} Q ${(from.cx + to.cx) / 2} ${midY} ${to.cx} ${to.cy}`
                         return (
                             <g key={move.id} onClick={() => onSelectMove(selected ? null : move.id)}>
                                 <path d={d} className="wmap__movehit" />
-                                <path d={d} className={`wmap__move${selected ? ' is-selected' : ''}`} markerEnd={selected ? 'url(#arrowSel)' : 'url(#arrow)'} />
+                                <path
+                                    d={d}
+                                    className={`wmap__move${selected ? ' is-selected' : ''}${dimmed ? ' is-dimmed' : ''}`}
+                                    markerEnd={selected ? 'url(#arrowSel)' : 'url(#arrow)'}
+                                />
                                 <title>
                                     {move.id} · {move.sku} · {move.from_slot} → {move.to_slot} · {move.benefit_hours_per_day} hr/day
                                 </title>

@@ -42,14 +42,14 @@ services:
   # --- model egress ---
   llm.supervisor:
     kind: http
-    description: Nemotron 3 Ultra supervisor NIM.
+    description: Supervisor model egress to the self-hosted Nemotron NIM.
     approval: per_user
     upstreams:
       default: ${NIM_BASE_URL:-http://127.0.0.1:8000/v1}
       cloud: ${NIM_CLOUD_BASE_URL:-https://integrate.api.nvidia.com/v1}
   llm.subagent:
     kind: http
-    description: Nemotron 3.5 Lightning sub-agent NIM.
+    description: Specialist-agent model egress to the self-hosted Nemotron NIM.
     approval: per_user
     upstreams:
       default: ${NIM_SUBAGENT_BASE_URL:-http://127.0.0.1:8010/v1}

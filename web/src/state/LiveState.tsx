@@ -14,7 +14,7 @@ type Live = {
     refreshOpenShell: () => Promise<void>
     startRun: () => Promise<void>
     setConstraints: (patch: Partial<Constraints>) => Promise<void>
-    decide: (moveId: string, decision: 'approved' | 'rejected') => Promise<void>
+    decide: (moveId: string, decision: 'approved' | 'rejected' | 'pending') => Promise<void>
     reset: () => Promise<void>
     clearError: () => void
 }
@@ -102,7 +102,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     )
 
     const decide = useCallback(
-        async (moveId: string, decision: 'approved' | 'rejected') => {
+        async (moveId: string, decision: 'approved' | 'rejected' | 'pending') => {
             await guard(async () => setRun(await api.decide(moveId, decision)))
         },
         [guard],

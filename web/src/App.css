@@ -73,7 +73,7 @@
     }
 }
 
-/* Global error banner — surfaced whenever a backend call fails. */
+/* Global error banner ï¿½ surfaced whenever a backend call fails. */
 .app-error {
     display: flex;
     align-items: center;
@@ -99,4 +99,10 @@
     border: 1px solid var(--alert-border);
     border-radius: var(--radius-sm);
     padding: 4px 10px;
+}
+
+/* The OpenShell console is a fixed overlay, so the banner is lifted above it. */
+.app-error {
+    position: relative;
+    z-index: 60;
 }

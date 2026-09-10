@@ -236,3 +236,30 @@
     color: var(--status-amber);
     font-weight: 600;
 }
+
+/* ===== WarehouseIQ additions: rack grouping and calmer arcs ===== */
+
+/* A faint panel behind each aisle so four racks per zone read as four racks. */
+.wmap__rack {
+    fill: rgba(255, 255, 255, 0.022);
+    stroke: rgba(42, 63, 96, 0.55);
+    stroke-width: 0.6;
+}
+
+.wmap__aislehead {
+    font-size: 7px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    fill: #55688a;
+}
+
+.wmap__move {
+    opacity: 0.45;
+    transition: opacity 0.15s;
+}
+.wmap__move.is-selected {
+    opacity: 1;
+}
+.wmap__move.is-dimmed {
+    opacity: 0.12;
+}

@@ -12,8 +12,32 @@
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"; cd "$REPO"
 
+# The cluster module init scripts reference unset variables, so -u is lifted
+# around them; a batch job otherwise dies here with no output at all.
+set +u
 command -v module >/dev/null 2>&1 || { source /etc/profile.d/modules.sh 2>/dev/null || source /usr/share/lmod/lmod/init/bash 2>/dev/null; }
-module load rootless-docker/1.75
+module load rootless-docker/1.75 2>/dev/null || true
+set -u
+# A batch job does not always get the module environment, and the daemon does
+# not survive the job that started it, so both are made explicit here.
+export PATH="/cm/shared/apps/rootless-docker/bin:$PATH"
+USER=${USER:-$(id -un)}
+export XDG_RUNTIME_DIR="/raid/docker/tmp/xdg_runtime_dir_$(id -u)"
+export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"
+if ! docker info >/dev/null 2>&1; then
+  echo "[boot] starting rootless docker on $(hostname)"
+  mkdir -p "$XDG_RUNTIME_DIR"
+  rm -rf "$XDG_RUNTIME_DIR/dockerd-rootless"
+  if command -v start_rootless_docker >/dev/null 2>&1; then
+    start_rootless_docker
+  else
+    nohup dockerd-rootless.sh --experimental \
+      --data-root="/raid/docker/tmp/docker-container-storage-$(id -u)" \
+      --storage-driver overlay2 > /tmp/dockerd-rootless.log 2>&1 &
+  fi
+  for _ in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done
+fi
+docker info >/dev/null 2>&1 || { echo "rootless docker did not start; see /tmp/dockerd-rootless.log" >&2; exit 1; }
 
 KEY=$(grep -m1 -oE 'nvapi-[A-Za-z0-9_-]+' .env)
 CACHE=/raid/docker/tmp/nim-cache-$USER
