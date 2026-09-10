@@ -1,0 +1,230 @@
+.topnav {
+    height: var(--topbar-h);
+    flex: 0 0 var(--topbar-h);
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    padding: 0 18px;
+    background: var(--bg-topbar);
+    border-bottom: 1px solid var(--border-subtle);
+    z-index: 20;
+}
+
+/* Brand */
+.topnav__brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
+}
+.topnav__logo {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: linear-gradient(150deg, #11243f, #0b1626);
+    border: 1px solid #1d345a;
+}
+.topnav__brand-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.1;
+}
+.topnav__brand-title {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #fff;
+}
+.topnav__brand-sub {
+    font-size: 9px;
+    letter-spacing: 0.16em;
+    color: var(--accent-cyan);
+}
+
+/* Weather + clock */
+.topnav__meta {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    /* The only shrinkable region, so a narrow window truncates this text
+       rather than clipping the navigation. */
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+}
+.topnav__weather {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.topnav__weather-icon {
+    color: var(--text-secondary);
+}
+.topnav__meta-text,
+.topnav__clock {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
+    min-width: 0;
+}
+.topnav__meta-strong {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.topnav__meta-dim {
+    font-size: 10px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Nav */
+.topnav__nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    flex: 0 0 auto;
+}
+.topnav__link {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    padding: 7px 12px;
+    border-radius: 6px;
+    white-space: nowrap;
+    transition:
+        color 0.15s,
+        background 0.15s;
+}
+.topnav__link:hover {
+    color: var(--text-primary);
+    background: var(--bg-card);
+}
+.topnav__link--active,
+.topnav__link--active:hover {
+    color: #fff;
+    background: var(--accent-blue);
+    font-weight: 600;
+}
+.topnav__navbadge {
+    display: inline-grid;
+    place-items: center;
+    min-width: 16px;
+    height: 16px;
+    margin-left: 6px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--status-amber);
+    color: #1a1200;
+    font-size: 9.5px;
+    font-weight: 800;
+}
+
+/* OpenShell launcher — a different persona, so it opens in its own tab */
+.topnav__gov {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #f2e27a;
+    background: rgba(255, 230, 0, 0.08);
+    border: 1px solid rgba(255, 230, 0, 0.32);
+    border-radius: 14px;
+    padding: 6px 12px;
+    transition:
+        background 0.15s,
+        border-color 0.15s;
+}
+.topnav__gov:hover {
+    background: rgba(255, 230, 0, 0.16);
+    border-color: rgba(255, 230, 0, 0.6);
+}
+.topnav__gov--pending {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.14);
+    border-color: rgba(251, 191, 36, 0.55);
+    animation: topnavGovPulse 1.5s ease-in-out infinite;
+}
+@keyframes topnavGovPulse {
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.35);
+    }
+    50% {
+        box-shadow: 0 0 0 5px rgba(251, 191, 36, 0);
+    }
+}
+
+/* Actions */
+.topnav__actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 0 0 auto;
+}
+.topnav__icon-btn {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    color: var(--text-secondary);
+}
+.topnav__icon-btn:hover {
+    background: var(--bg-card);
+}
+.topnav__dot {
+    position: absolute;
+    top: 7px;
+    right: 8px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--status-red);
+    box-shadow: 0 0 0 2px var(--bg-topbar);
+}
+.topnav__user {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 12px;
+    border-radius: 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    cursor: pointer;
+    transition:
+        border-color 0.15s,
+        box-shadow 0.15s;
+}
+.topnav__user:hover {
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.22);
+}
+.topnav__user-name {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.topnav__user-caret {
+    color: var(--text-muted);
+}
+
+@media (max-width: 1200px) {
+    .topnav {
+        gap: 14px;
+    }
+    .topnav__link {
+        padding: 6px 9px;
+        font-size: 12px;
+    }
+}

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import httpx
@@ -32,8 +33,25 @@ logging.basicConfig(level=logging.INFO)
 CUOPT_SERVER_URL = os.getenv("CUOPT_SERVER_URL", "http://127.0.0.1:5000").rstrip("/")
 # Path differs across cuOpt releases; override with CUOPT_SOLVE_PATH if needed.
 CUOPT_SOLVE_PATH = os.getenv("CUOPT_SOLVE_PATH", "/cuopt/request")
-REQUEST_TIMEOUT = float(os.getenv("CUOPT_TIMEOUT_SECONDS", "120"))
-MAX_CANDIDATES = int(os.getenv("CUOPT_MAX_CANDIDATES", "40"))
+CUOPT_RESULT_PATH = os.getenv("CUOPT_RESULT_PATH", "/cuopt/solution")
+POLL_INTERVAL = float(os.getenv("CUOPT_POLL_INTERVAL_SECONDS", "0.5"))
+REQUEST_TIMEOUT = float(os.getenv("CUOPT_TIMEOUT_SECONDS", "600"))
+# The model is every movable SKU against every slot it could occupy. A narrow
+# slice solves in milliseconds but only ever finds a local rearrangement.
+MAX_CANDIDATES = int(os.getenv("CUOPT_MAX_CANDIDATES", "400"))
+# Slots offered per SKU. More choice is a materially better layout, at the cost
+# of a quadratically larger LP.
+SLOTS_PER_CANDIDATE = int(os.getenv("CUOPT_SLOTS_PER_CANDIDATE", "3"))
+# cuOpt 26.08 crashes its solver process in the default concurrent mode (0) on
+# this assignment LP, which dual simplex (2) solves reliably.
+CUOPT_METHOD = int(os.getenv("CUOPT_METHOD", "2"))
+CUOPT_TIME_LIMIT = float(os.getenv("CUOPT_TIME_LIMIT_SECONDS", "300"))
+# Average picker walking speed, used to convert metres saved into hours saved.
+WALK_SPEED_MPS = float(os.getenv("PICKER_WALK_SPEED_MPS", "1.2"))
+# Fixed pick-and-put allowance per relocation, on top of the walking time.
+HANDLING_MINUTES = float(os.getenv("RELOCATION_HANDLING_MINUTES", "6"))
+DEFAULT_WINDOW_MINUTES = float(os.getenv("LABOUR_MINUTES_PER_WINDOW", "240"))
+ALTERNATIVES_PER_MOVE = int(os.getenv("CUOPT_ALTERNATIVES_PER_MOVE", "3"))
 
 app = FastAPI(title="Warehouse slotting adapter for cuOpt")
 
@@ -55,7 +73,7 @@ def _daily_picks(sku: Mapping[str, Any], horizon_days: int, forecast_by_sku: Map
     return float(sku.get("base_velocity", 0.0))
 
 
-def _build_inputs(request: SlottingRequest) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, str], int]:
+def _build_inputs(request: SlottingRequest) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, str], int, List[Dict[str, Any]]]:
     source = request.source_data or {}
     wms = source.get("wms", {})
     layout = [row for row in wms.get("warehouse_layout", []) if str(row.get("operational_status", "ACTIVE")).upper() == "ACTIVE"]
@@ -69,9 +87,12 @@ def _build_inputs(request: SlottingRequest) -> Tuple[List[Dict[str, Any]], List[
             totals[key] = totals.get(key, 0.0) + float(row.get("forecast_qty", 0.0))
 
     current_slot: Dict[str, str] = {}
+    sku_by_slot: Dict[str, str] = {}
     for row in wms.get("slot_occupancy", []):
         sku_id = str(row.get("sku_id"))
-        current_slot.setdefault(sku_id, str(row.get("slot_id")))
+        slot_id = str(row.get("slot_id"))
+        current_slot.setdefault(sku_id, slot_id)
+        sku_by_slot[slot_id] = sku_id
 
     locked = {str(item) for item in request.constraints.get("locked_skus", [])}
     cold_locked = bool(request.constraints.get("cold_chain_locked", True))
@@ -86,13 +107,18 @@ def _build_inputs(request: SlottingRequest) -> Tuple[List[Dict[str, Any]], List[
         movable.append({**sku, "_picks": _daily_picks(sku, request.planning_horizon_days, totals)})
 
     movable.sort(key=lambda row: row["_picks"], reverse=True)
-    movable = movable[:MAX_CANDIDATES]
+    candidates = movable[:MAX_CANDIDATES]
 
-    layout.sort(key=lambda row: float(row.get("distance_to_picking_m", 0.0)))
-    slots = layout[: max(len(movable), 1)]
+    # Only offer slots that are free or already held by a SKU in this problem.
+    # Assigning into someone else's slot displaces stock the model never priced,
+    # which both overstates the gain and leaves the layout improvable forever.
+    candidate_ids = {str(sku.get("sku_id")) for sku in candidates}
+    available = [row for row in layout if sku_by_slot.get(str(row.get("slot_id")), "") in ("", *candidate_ids)]
+    available.sort(key=lambda row: float(row.get("distance_to_picking_m", 0.0)))
+    slots = available[: max(len(candidates) * SLOTS_PER_CANDIDATE, 1)]
 
     max_moves = int(request.constraints.get("max_moves", 10))
-    return movable, slots, current_slot, max_moves
+    return candidates, slots, current_slot, max_moves, movable
 
 
 def _assignment_lp(skus: List[Dict[str, Any]], slots: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -133,6 +159,32 @@ def _assignment_lp(skus: List[Dict[str, Any]], slots: List[Dict[str, Any]]) -> D
     }
 
 
+def _relocation_minutes(from_distance: float, to_distance: float) -> float:
+    """Two laden trips at walking pace, plus a fixed handling allowance."""
+    travel_seconds = (from_distance + to_distance) * 2 / WALK_SPEED_MPS
+    return HANDLING_MINUTES + travel_seconds / 60.0
+
+
+def _alternatives(sku: Mapping[str, Any], slots: List[Dict[str, Any]], chosen: Mapping[str, Any], from_distance: float) -> List[Dict[str, Any]]:
+    """The runner-up slots cuOpt passed over, with the gain each would have given."""
+    picks = float(sku["_picks"])
+    ranked = sorted(slots, key=lambda row: float(row.get("distance_to_picking_m", 0.0)))
+    out = []
+    for row in ranked:
+        slot_id = str(row.get("slot_id"))
+        if slot_id == str(chosen.get("slot_id")):
+            continue
+        distance = float(row.get("distance_to_picking_m", 0.0))
+        out.append({
+            "slot_id": slot_id,
+            "distance_m": distance,
+            "gain_metre_picks": round(picks * (from_distance - distance), 1),
+        })
+        if len(out) == ALTERNATIVES_PER_MOVE:
+            break
+    return out
+
+
 def _find_primal(payload: Any) -> Optional[List[float]]:
     """cuOpt nests the solution differently across versions, so search for it."""
     if isinstance(payload, dict):
@@ -153,14 +205,30 @@ def _find_primal(payload: Any) -> Optional[List[float]]:
 
 
 def _solve_with_cuopt(problem: Dict[str, Any]) -> List[float]:
+    """cuOpt queues the job and returns a reqId, so the result must be polled."""
     url = CUOPT_SERVER_URL + CUOPT_SOLVE_PATH
+    body = dict(problem)
+    body["solver_config"] = {"method": CUOPT_METHOD, "time_limit": CUOPT_TIME_LIMIT}
     try:
-        response = httpx.post(url, json=problem, timeout=REQUEST_TIMEOUT)
+        response = httpx.post(url, json=body, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
+        payload = response.json()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=503, detail=f"cuOpt call failed: {exc}") from exc
 
-    primal = _find_primal(response.json())
+    primal = _find_primal(payload)
+    req_id = payload.get("reqId") if isinstance(payload, dict) else None
+    deadline = time.monotonic() + REQUEST_TIMEOUT
+
+    while not primal and req_id and time.monotonic() < deadline:
+        time.sleep(POLL_INTERVAL)
+        try:
+            polled = httpx.get(f"{CUOPT_SERVER_URL}{CUOPT_RESULT_PATH}/{req_id}", timeout=REQUEST_TIMEOUT)
+            polled.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=503, detail=f"cuOpt polling failed: {exc}") from exc
+        primal = _find_primal(polled.json())
+
     if not primal:
         raise HTTPException(status_code=503, detail="cuOpt returned no primal solution")
     return primal
@@ -173,9 +241,12 @@ def health() -> Dict[str, str]:
 
 @app.post("/solve/slotting")
 def solve_slotting(request: SlottingRequest) -> Dict[str, Any]:
-    skus, slots, current_slot, max_moves = _build_inputs(request)
+    skus, slots, current_slot, max_moves, all_movable = _build_inputs(request)
     if not skus or not slots:
         raise HTTPException(status_code=422, detail="source_data lacked usable SKU master or warehouse layout")
+
+    layout_all = request.source_data.get("wms", {}).get("warehouse_layout", [])
+    distance_by_slot = {str(r.get("slot_id")): float(r.get("distance_to_picking_m", 0.0)) for r in layout_all}
 
     primal = _solve_with_cuopt(_assignment_lp(skus, slots))
     n_slot = len(slots)
@@ -193,32 +264,52 @@ def solve_slotting(request: SlottingRequest) -> Dict[str, Any]:
         origin = current_slot.get(sku_id, "Unassigned")
         if origin == str(slot.get("slot_id")):
             continue
-        saved_metres = float(sku["_picks"]) * float(slot.get("distance_to_picking_m", 0.0))
-        candidates.append((saved_metres, sku, slot, origin))
+        gain = float(sku["_picks"]) * (distance_by_slot.get(origin, 0.0) - float(slot.get("distance_to_picking_m", 0.0)))
+        candidates.append((gain, sku, slot, origin))
 
-    candidates.sort(key=lambda item: item[0])
-    selected = candidates[:max_moves]
+    # Keep only relocations that actually shorten travel, best first.
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    selected = [item for item in candidates if item[0] > 0][:max_moves]
+
+    # Pack the moves into execution windows under the labour budget, best first.
+    # This is sequencing after the solve, not a multi-period optimisation.
+    budget = float(request.constraints.get("labour_minutes_per_window", DEFAULT_WINDOW_MINUTES))
+    window_index, window_used = 0, 0.0
 
     moves: List[Dict[str, Any]] = []
-    for index, (_, sku, slot, origin) in enumerate(selected):
+    for index, (gain, sku, slot, origin) in enumerate(selected):
+        labor_minutes = _relocation_minutes(distance_by_slot.get(origin, 0.0), float(slot.get("distance_to_picking_m", 0.0)))
+        if window_used + labor_minutes > budget and window_used > 0:
+            window_index += 1
+            window_used = 0.0
+        window_used += labor_minutes
         moves.append({
             "move_id": f"MV-{index + 1:03d}",
             "sku_id": str(sku.get("sku_id")),
             "product_name": sku.get("product_name", ""),
             "from_slot": origin,
             "to_slot": str(slot.get("slot_id")),
-            "day": index % max(request.planning_horizon_days, 1),
+            "day": min(window_index, max(request.planning_horizon_days - 1, 0)),
             "window": "Low-volume shift",
             "reason": f"cuOpt assigned this SKU ({round(float(sku['_picks']), 1)} picks/day) to a slot {slot.get('distance_to_picking_m')}m from the pick face.",
-            "benefit_hours_per_day": round(float(sku["_picks"]) * float(slot.get("distance_to_picking_m", 0.0)) / 3600.0, 2),
-            "labor_minutes": 10 + index * 2,
-            "confidence": 95,
+            "benefit_hours_per_day": round(gain / (WALK_SPEED_MPS * 3600.0), 2),
+            "labor_minutes": round(labor_minutes),
+            "alternatives": _alternatives(sku, slots, slot, distance_by_slot.get(origin, 0.0)),
             "type": "travel",
         })
 
-    baseline = sum(float(sku["_picks"]) * 40.0 for sku in skus[:len(selected)]) or 1.0
-    optimised = sum(float(sku["_picks"]) * float(slot.get("distance_to_picking_m", 0.0)) for _, sku, slot, _ in selected)
-    reduction = max(0.0, min(100.0, (1.0 - optimised / baseline) * 100.0))
+    # Report the saving against the travel the whole warehouse does today, not
+    # just against the handful of lines that move, or the number reads as if
+    # every pick got shorter.
+    saving = sum(
+        float(sku["_picks"]) * (distance_by_slot.get(origin, 0.0) - float(slot.get("distance_to_picking_m", 0.0)))
+        for _, sku, slot, origin in selected
+    )
+    warehouse_travel = sum(
+        float(sku["_picks"]) * distance_by_slot.get(current_slot.get(str(sku.get("sku_id")), ""), 0.0)
+        for sku in all_movable
+    )
+    reduction = 0.0 if warehouse_travel <= 0 else max(0.0, min(100.0, saving / warehouse_travel * 100.0))
 
     return {
         "headline": "cuOpt constrained slotting plan",
@@ -227,7 +318,7 @@ def solve_slotting(request: SlottingRequest) -> Dict[str, Any]:
             "travel_reduction_pct": round(reduction, 1),
             "replenishment_reduction_pct": round(reduction / 2.0, 1),
             "constraint_violations": 0,
-            "plan_value": round(baseline - optimised, 2),
+            "plan_value": round(saving, 2),
         },
         "explanation": f"cuOpt solved a {len(skus)}x{len(slots)} assignment model and returned {len(moves)} feasible moves within the move cap of {max_moves}.",
     }

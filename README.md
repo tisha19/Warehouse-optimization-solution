@@ -2,18 +2,21 @@
 
 Production-oriented integration scaffold for a warehouse DeepAgent workflow. Real NVIDIA and cuOpt services are required; only WMS, ERP, and forecasting endpoints have local synthetic mocks.
 
-## Hackathon Showcase
+## WarehouseIQ Operator UI
 
-The showcase is an operational planner workbench featuring a seven-day move calendar, WMS-ready move manifest, warehouse pressure map, Nemotron rationale, agent trace, KPI trade-offs, and human approval controls.
+WarehouseIQ is a four-screen operator console: a **Cockpit** with the live demand signal and a slot-level warehouse map, a **Move Plan** with the constraint rail and the WMS-ready move manifest, a **DeepAgent Run** span waterfall, and the **OpenShell** governance console.
+
+The UI is a React + Vite application in `web/`. It must be built before the server will start:
 
 ```bash
-source .venv/bin/activate
-python showcase_server.py --port 8080
+cd web && npm ci && npm run build
+cd .. && source .venv/bin/activate
+python showcase_server.py --port 8090
 ```
 
-Open `http://127.0.0.1:8080`. For the primary demo interaction, change the planner instruction to `Lock Sparkling Water in B-12 and keep the plan under 6 moves`, set the move cap to 6, and run the plan. The UI visibly recalculates the plan and explains the lost travel benefit.
+Open `http://127.0.0.1:8090`.
 
-The local UI uses clearly labeled **Scenario Replay** data. It does not mock NVIDIA NIM, NeMo, OpenShell, Guardrails, or cuOpt. The production-services panel reports whether their real environment URLs are configured.
+Every number on screen comes from a live service call. WMS, ERP, and forecasting are backed by the synthetic generator in `mocks/`; NVIDIA NIM, cuOpt, NeMo Guardrails, and OpenShell are the real services. **Nothing is faked and there is no fallback path** — if a service is unreachable, the screen shows the failure instead of substituting a plan.
 
 ## Production Architecture
 
@@ -43,6 +46,10 @@ WMS / ERP / Forecast APIs
 - `tools/governance.py`: OpenShell-style permissions and human approvals
 - `tools/harness.py`: Hard constraints and regression cases
 - `production_main.py`: Planning and approval-gated write-back CLI
+- `showcase_server.py`: JSON API for the UI; serves the built bundle from `web/dist`
+- `showcase/controller.py`: Warehouse layout, demand signal, run, and commit endpoints
+- `showcase/demand.py`: Forecast-derived pick rates and promotion signal
+- `web/`: React + Vite operator UI (Cockpit, Move Plan, DeepAgent Run, OpenShell)
 - `mocks/enterprise_services.py`: Synthetic WMS, ERP, and forecast services only
 - `tests/test_production.py`: Offline governance and regression tests
 - `.env.example`: Endpoint and credential configuration template

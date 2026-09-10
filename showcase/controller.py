@@ -1,243 +1,521 @@
-"""Workflow-backed view model for the hackathon showcase."""
+"""State machine behind the WarehouseIQ UI.
+
+Four screens, one rule: nothing is shown that a live service did not produce.
+There is no placeholder plan and no fallback. If the NIM, cuOpt, NeMo
+Guardrails or the OpenShell governor cannot do its part, the run fails with the
+reason and the UI reports it.
+"""
 
 from __future__ import annotations
 
-import os
-from typing import Any, Callable, Dict, Mapping
+import json
+import random
+import threading
+import time
+import urllib.error
+import urllib.request
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from agents.workflow import ProductionWarehouseWorkflow
 from mocks.enterprise_adapters import SyntheticERPAdapter, SyntheticForecastAdapter, SyntheticWMSAdapter
-from mocks.enterprise_services import MockServiceState
+from mocks.enterprise_services import MockServiceState, resolve_seed
 from services.config import ProductionConfig
+from showcase.demand import daily_picks, demand_signal
+from showcase.kpis import detect_problems, warehouse_kpis
 
-REQUIRED_LIVE_ENV = ("NIM_BASE_URL", "CUOPT_URL", "NEMO_GUARDRAILS_URL")
+ACTOR = "warehouse-planner"
+SITE = "DC-07 / North distribution centre"
+GOAL = (
+    "Reduce picker travel over the next seven days. Stay within the move cap, keep cold-chain stock "
+    "where it is, and prioritise the highest-demand lines."
+)
+STAGES = (
+    ("ingest", "Read WMS, ERP and forecast"),
+    ("load_policies", "Load operating policies"),
+    ("plan", "Supervisor agent plans"),
+    ("specialists", "Specialist agents analyse"),
+    ("optimize", "cuOpt solves the slotting model"),
+    ("validate", "Guardrails and policy check"),
+    ("create_approval", "Raise approval for review"),
+)
+# write_wms is per_call, so the governor holds the write until an operator answers.
+WRITE_APPROVAL_WAIT_SECONDS = 300
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class ShowcaseController:
-    def __init__(self, seed: int = 7, workflow_factory: Callable[..., Any] = ProductionWarehouseWorkflow):
-        self.enterprise = MockServiceState(seed)
+    def __init__(self, seed: int | None = None, workflow_factory: Callable[..., Any] = ProductionWarehouseWorkflow):
+        self.workflow_factory = workflow_factory
         self.config = ProductionConfig.from_env()
-        self.workflow = workflow_factory(
+        self.goal = GOAL
+        self.constraints: Dict[str, Any] = {"max_moves": 30, "locked_skus": [], "cold_chain_locked": True, "labour_minutes_per_window": 240, "execution_windows": ["low-volume shifts"]}
+        self._lock = threading.Lock()
+        self._load(resolve_seed(seed))
+
+    def _load(self, seed: int) -> None:
+        self.seed = seed
+        self.enterprise = MockServiceState(seed)
+        self.run_state = self._idle_run()
+        self.decisions = {}
+        self.commit_history = []
+        self.commit_state = {"status": "IDLE", "service": "write_wms", "error": None, "commit": None}
+        self.baseline_kpis = None
+        self.workflow = self.workflow_factory(
             config=self.config,
             wms=SyntheticWMSAdapter(self.enterprise),
             erp=SyntheticERPAdapter(self.enterprise),
             forecast=SyntheticForecastAdapter(self.enterprise),
+            on_event=self._on_workflow_event,
         )
-        self.goal = "Prepare a seven-day promotion plan. Keep moves below 10, lock cold-chain inventory, and prioritize picker travel."
-        self.constraints: Dict[str, Any] = {"max_moves": 10, "locked_skus": [], "cold_chain_locked": True, "execution_windows": ["low-volume shifts"]}
-        self.version = 0
-        self.workflow_state: Dict[str, Any] = {}
-        self.view_state: Dict[str, Any] = {}
-        self.run()
 
-    @staticmethod
-    def missing_configuration() -> list[str]:
-        return [name for name in REQUIRED_LIVE_ENV if not os.getenv(name)]
+    def reset(self) -> Dict[str, Any]:
+        """Generate a different warehouse and forget everything about the last one."""
+        with self._lock:
+            self._load(random.SystemRandom().randrange(1, 2**31))
+        return self.dashboard()
 
-    def _fallback_solution_for_constraints(self, goal: str, constraints: Mapping[str, Any]) -> Dict[str, Any]:
-        max_moves = max(1, min(12, int(constraints.get("max_moves", 10))))
-        locked = {str(sku) for sku in constraints.get("locked_skus", [])}
-        source = {"wms": self.enterprise.snapshot(), "erp": {"sku_master": self.enterprise.sku_master(), "inbound": self.enterprise.inbound()}, "forecast": self.enterprise.forecast(14)}
-        sku_rows = source["erp"]["sku_master"]["sku_master"]
-        sku_by_id = {str(row.get("sku_id")): row for row in sku_rows}
-        candidates = [row for row in sku_rows if str(row.get("sku_id")) not in locked]
-        if not candidates:
-            candidates = sku_rows
-        slots = [row.get("slot_id") for row in source["wms"]["warehouse_layout"][:max_moves * 2]]
-        if len(slots) < 2:
-            slots = [f"A{idx:04d}" for idx in range(1, max_moves + 1)]
-        plan_moves = []
-        for idx in range(max_moves):
-            sku = candidates[idx % len(candidates)]
-            sku_id = str(sku.get("sku_id", f"SKU-{idx:03d}"))
-            from_slot = slots[idx * 2 % len(slots)]
-            to_slot = slots[(idx * 2 + 1) % len(slots)]
-            plan_moves.append({
-                "move_id": f"MV-{idx + 1:03d}",
-                "sku_id": sku_id,
-                "product_name": sku.get("product_name", "Warehouse Item"),
-                "from_slot": from_slot,
-                "to_slot": to_slot,
-                "day": idx % 7,
-                "window": "Low-volume shift" if idx % 2 == 0 else "Promotional replenishment",
-                "reason": "Promotional demand and travel reduction justify moving this inventory closer to the active pick face.",
-                "benefit_hours_per_day": round(2.5 + (idx * 0.9), 2),
-                "labor_minutes": 10 + idx * 3,
-                "confidence": 92,
-                "type": "travel",
-                "status": "Pending approval",
-            })
-        travel_reduction = 18.5 if max_moves >= 8 else 12.8
-        if goal.lower().find("sparkling") >= 0 or "SKU-100" in locked:
-            travel_reduction = 12.8
+    # ---------------------------------------------------------------- dashboard
+
+    def _source_data(self) -> Dict[str, Any]:
         return {
-            "headline": "Deterministic local planner fallback",
-            "moves": plan_moves,
-            "metrics": {"travel_reduction_pct": travel_reduction, "replenishment_reduction_pct": -12.0, "constraint_violations": 0, "plan_value": float(max_moves * 100 + 30)},
-            "explanation": "The live production services were not reachable, so the planner generated a deterministic move plan from the warehouse state to keep the dashboard usable and inspectable.",
-            "recommendations": plan_moves,
-            "source_data": source,
-            "sku_by_id": sku_by_id,
+            "wms": self.enterprise.snapshot(),
+            "erp": {"sku_master": self.enterprise.sku_master(), "inbound": self.enterprise.inbound()},
+            "forecast": self.enterprise.forecast(14),
         }
 
-    def run(self, goal: str | None = None, constraints: Mapping[str, Any] | None = None) -> Dict[str, Any]:
-        if goal:
-            self.goal = goal
-        if constraints:
-            self.constraints.update(dict(constraints))
-        try:
-            self.workflow_state = self.workflow.run(self.goal, "hackathon-planner", dict(self.constraints))
-        except Exception:
-            solution = self._fallback_solution_for_constraints(self.goal, self.constraints)
-            validation = {"status": "PASSED", "openshell_allowed": True, "guardrails_allowed": True}
-            approval = self.workflow.approvals.create(solution["moves"], "hackathon-planner", validation)
-            self.workflow_state = {
-                "business_goal": self.goal,
-                "actor": "hackathon-planner",
-                "constraints": dict(self.constraints),
-                "source_data": {"wms": self.enterprise.snapshot(), "erp": {"sku_master": self.enterprise.sku_master(), "inbound": self.enterprise.inbound()}, "forecast": self.enterprise.forecast(14)},
-                "specialist_analysis": {
-                    "demand": {"summary": "Demand signal is concentrated in high-velocity promo and replenishment lines."},
-                    "inventory": {"summary": "Forward-pick slots are under pressure; reserve stock remains available for replenishment."},
-                    "warehouse": {"summary": "Slotting change near the promotional aisle reduces travel without violating cold-chain constraints."},
-                },
-                "plan": {"goal": self.goal},
-                "solution": solution,
-                "validation": validation,
-                "approval": approval,
-                "trace": [{"node": "ingest", "message": "Synthetic WMS/ERP/forecast data ingested"}, {"node": "load_policies", "message": "Local warehouse operating policies applied"}, {"node": "optimize", "message": "Local deterministic planner fallback used"}],
+    def dashboard(self) -> Dict[str, Any]:
+        source = self._source_data()
+        kpis = warehouse_kpis(source)
+        if self.baseline_kpis is None:
+            self.baseline_kpis = dict(kpis)
+        layout = source["wms"]["warehouse_layout"]
+        occupancy = source["wms"]["slot_occupancy"]
+        occupied: Dict[int, int] = {}
+        for row in occupancy:
+            zone = int(row["zone_id"])
+            occupied[zone] = occupied.get(zone, 0) + 1
+        zones = []
+        for zone in sorted({int(row["zone_id"]) for row in layout}):
+            rows = [row for row in layout if int(row["zone_id"]) == zone]
+            chilled = any(row.get("temperature_controlled") for row in rows)
+            zones.append({
+                "id": chr(64 + zone),
+                "label": "Forward pick" if zone == 1 else "Chilled reserve" if chilled else "Reserve",
+                "slots": len(rows),
+                "utilisation": round(occupied.get(zone, 0) / max(len(rows), 1) * 100),
+                "distance": round(sum(float(row["distance_to_picking_m"]) for row in rows) / max(len(rows), 1)),
+            })
+        return {
+            "site": SITE,
+            "kpis": kpis,
+            "baseline": self.baseline_kpis,
+            "problems": detect_problems(kpis, source, self.constraints),
+            "zones": zones,
+            "counts": {
+                "skus": len(source["erp"]["sku_master"]["sku_master"]),
+                "slots": len(layout),
+                "occupied": len(occupancy),
+                "inbound": len(source["erp"]["inbound"]["inbound_shipments"]),
+                "forecast_rows": len(source["forecast"]["forecast"]),
+            },
+            "services": self.service_status(),
+            "commits": self.commit_history[-5:],
+            "last_commit": self.commit_history[-1] if self.commit_history else None,
+            "relocated_total": sum(int(c.get("relocated", 0)) for c in self.commit_history),
+            "dataset_seed": self.seed,
+            "run": {"id": self.run_state.get("id"), "status": self.run_state.get("status")},
+            "generated_at": _now(),
+        }
+
+    def layout(self) -> Dict[str, Any]:
+        """Slot geometry and what occupies each one, for the warehouse map."""
+        source = self._source_data()
+        wms = source["wms"]
+        sku_by_id = {str(row.get("sku_id")): row for row in source["erp"]["sku_master"]["sku_master"]}
+        picks = daily_picks(source)
+        occupant: Dict[str, Dict[str, Any]] = {}
+        for row in wms["slot_occupancy"]:
+            slot_id = str(row["slot_id"])
+            sku_id = str(row["sku_id"])
+            sku = sku_by_id.get(sku_id, {})
+            occupant[slot_id] = {
+                "sku_id": sku_id,
+                "product_name": sku.get("product_name", sku_id),
+                "abc_class": sku.get("abc_class", ""),
+                "quantity": int(row.get("quantity", 0)),
+                "picks_per_day": round(picks.get(sku_id, 0.0)),
             }
-        self.version += 1
-        self.view_state = self._to_view_state(self.workflow_state)
-        return self.view_state
+        slots = [
+            {
+                "slot_id": str(row["slot_id"]),
+                "zone": chr(64 + int(row["zone_id"])),
+                "zone_id": int(row["zone_id"]),
+                "aisle": int(row.get("aisle", 1)),
+                "bay": int(row.get("bay", 1)),
+                "level": int(row.get("level", 1)),
+                "distance_m": float(row.get("distance_to_picking_m", 0.0)),
+                "status": str(row.get("operational_status", "ACTIVE")),
+                "temperature_controlled": bool(row.get("temperature_controlled")),
+                "occupant": occupant.get(str(row["slot_id"])),
+            }
+            for row in wms["warehouse_layout"]
+        ]
+        return {
+            "site": SITE,
+            "slots": slots,
+            "aisles_per_zone": max((slot["aisle"] for slot in slots), default=1),
+            "bays_per_aisle": max((slot["bay"] for slot in slots), default=1),
+            "levels_per_bay": max((slot["level"] for slot in slots), default=1),
+            "forward_pick_zone": "A",
+            "moves": self.run_state.get("moves", []),
+        }
 
-    def state(self) -> Dict[str, Any]:
-        return self.view_state or self.run()
+    def demand(self) -> Dict[str, Any]:
+        return demand_signal(self._source_data())
 
-    def replan(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
-        constraints = {"max_moves": max(1, min(20, int(payload.get("max_moves", self.constraints["max_moves"])) ))}
-        lock = payload.get("lock_sku")
-        if lock:
-            constraints["locked_skus"] = sorted(set(self.constraints.get("locked_skus", [])) | {str(lock)})
-        unlock = payload.get("unlock_sku")
-        if unlock:
-            constraints["locked_skus"] = [sku for sku in self.constraints.get("locked_skus", []) if sku != str(unlock)]
-        return self.run(str(payload.get("goal") or self.goal), constraints)
+    def set_constraints(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        """Planner-editable limits; the next run hands these to cuOpt."""
+        if "max_moves" in payload:
+            self.constraints["max_moves"] = max(1, min(120, int(payload["max_moves"])))
+        if "cold_chain_locked" in payload:
+            self.constraints["cold_chain_locked"] = bool(payload["cold_chain_locked"])
+        if "locked_skus" in payload:
+            self.constraints["locked_skus"] = sorted({str(sku) for sku in payload["locked_skus"]})
+        if "labour_minutes_per_window" in payload:
+            self.constraints["labour_minutes_per_window"] = max(30, min(960, int(payload["labour_minutes_per_window"])))
+        return dict(self.constraints)
 
-    def approve(self, _: str = "") -> Dict[str, Any]:
-        approval = self.workflow_state.get("approval", {})
+    def service_status(self) -> List[Dict[str, Any]]:
+        return [
+            {"name": "Nemotron NIM (supervisor)", "endpoint": self.config.nim_base_url, "detail": self.config.nim_model},
+            {"name": "Nemotron NIM (specialists)", "endpoint": self.config.nim_subagent_base_url or self.config.nim_base_url, "detail": self.config.nim_subagent_model or self.config.nim_model},
+            {"name": "NVIDIA cuOpt", "endpoint": self.config.cuopt_url, "detail": "linear assignment solver"},
+            {"name": "NeMo Guardrails", "endpoint": self.config.guardrails_url, "detail": self.config.guardrails_config_id},
+            {"name": "OpenShell Governor", "endpoint": self.config.openshell_url, "detail": "policy gate"},
+        ]
+
+    # ---------------------------------------------------------------- the run
+
+    def _idle_run(self) -> Dict[str, Any]:
+        return {
+            "id": None,
+            "status": "IDLE",
+            "stages": [{"key": key, "label": label, "status": "pending", "detail": "", "duration_ms": 0} for key, label in STAGES],
+            "events": [],
+            "agents": [],
+            "guardrails": [],
+            "openshell": [],
+            "cuopt": None,
+            "plan": None,
+            "moves": [],
+            "approval": None,
+            "validation": None,
+            "error": None,
+            "halted_on": None,
+            "started_at": None,
+            "finished_at": None,
+            "tokens": {"prompt": 0, "completion": 0, "calls": 0},
+        }
+
+    def _event(self, message: str, kind: str = "info", stage: str = "") -> None:
+        self.run_state["events"].append({"at": _now(), "kind": kind, "stage": stage, "message": message})
+
+    def _set_stage(self, key: str, status: str, detail: str = "") -> None:
+        for stage in self.run_state["stages"]:
+            if stage["key"] != key:
+                continue
+            if status == "running":
+                stage["_started"] = time.perf_counter()
+            elif "_started" in stage:
+                stage["duration_ms"] = round((time.perf_counter() - stage.pop("_started")) * 1000)
+            stage["status"] = status
+            if detail:
+                stage["detail"] = detail
+            return
+
+    def _on_workflow_event(self, kind: str, payload: Mapping[str, Any]) -> None:
+        with self._lock:
+            if kind == "stage":
+                node = str(payload.get("node"))
+                message = str(payload.get("message", ""))
+                for stage in self.run_state["stages"]:
+                    if stage["key"] == node and stage["status"] == "pending":
+                        self._set_stage(node, "running", message)
+                    elif stage["key"] != node and stage["status"] == "running":
+                        self._set_stage(stage["key"], "done")
+                self._event(message, "stage", node)
+            elif kind == "specialist_started":
+                agent = str(payload.get("agent"))
+                self.run_state["agents"].append({"name": agent, "role": "specialist", "status": "running", "reasoning": [], "findings": [], "risks": [], "telemetry": {}})
+                self._event(f"{agent} specialist started", "agent", "specialists")
+            elif kind == "specialist_finished":
+                agent = str(payload.get("agent"))
+                analysis = dict(payload.get("analysis") or {})
+                for record in self.run_state["agents"]:
+                    if record["name"] == agent:
+                        record.update({
+                            "status": "done",
+                            "reasoning": self._as_list(analysis.get("reasoning")),
+                            "findings": self._as_list(analysis.get("findings")),
+                            "risks": self._as_list(analysis.get("risks")),
+                            "telemetry": analysis.get("telemetry", {}),
+                        })
+                self._event(f"{agent} specialist finished", "agent", "specialists")
+            elif kind == "plan_ready":
+                plan = dict(payload.get("plan") or {})
+                self.run_state["plan"] = plan
+                self.run_state["agents"].insert(0, {
+                    "name": "supervisor",
+                    "role": "supervisor",
+                    "status": "done",
+                    "reasoning": self._as_list(plan.get("reasoning")),
+                    "findings": self._as_list(plan.get("objectives")),
+                    "risks": self._as_list(plan.get("binding_constraints")),
+                    "telemetry": plan.get("telemetry", {}),
+                })
+                self._event("Supervisor produced objectives and weights", "agent", "plan")
+            elif kind == "guardrail":
+                self.run_state["guardrails"].append({**dict(payload), "at": _now()})
+                verdict = "allowed" if payload.get("allowed") else "blocked"
+                self._event(f"Guardrails {verdict} the {payload.get('stage')} stage", "guardrail", "validate")
+            elif kind == "openshell":
+                self.run_state["openshell"].append({**dict(payload), "at": _now()})
+                verdict = "granted" if payload.get("allowed") else "withheld"
+                self._event(f"OpenShell {verdict} {payload.get('service')}", "openshell")
+            elif kind == "openshell_halt":
+                self.run_state["status"] = "HALTED"
+                self.run_state["halted_on"] = {"service": payload.get("service"), "reason": payload.get("reason")}
+                for stage in self.run_state["stages"]:
+                    if stage["status"] == "running":
+                        stage["status"] = "blocked"
+                        stage["detail"] = str(payload.get("reason", ""))
+                self._event(f"Halted: OpenShell has not granted {payload.get('service')}. {payload.get('reason')}", "openshell")
+            elif kind == "openshell_resumed":
+                self.run_state["status"] = "RUNNING"
+                self.run_state["halted_on"] = None
+                for stage in self.run_state["stages"]:
+                    if stage["status"] == "blocked":
+                        stage["status"] = "running"
+                self._event(f"Resumed: OpenShell granted {payload.get('service')}", "openshell")
+            elif kind == "cuopt_solved":
+                solution = dict(payload.get("solution") or {})
+                self.run_state["cuopt"] = {
+                    "headline": solution.get("headline"),
+                    "explanation": solution.get("explanation"),
+                    "metrics": solution.get("metrics", {}),
+                    "telemetry": solution.get("telemetry", {}),
+                    "move_count": len(solution.get("moves") or []),
+                }
+                self._event("cuOpt returned an optimal assignment", "solver", "optimize")
+
+    @staticmethod
+    def _as_list(value: Any) -> List[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        if isinstance(value, dict):
+            return [f"{key}: {item}" for key, item in value.items()]
+        return [str(value)] if value else []
+
+    def start_run(self) -> Dict[str, Any]:
+        with self._lock:
+            if self.run_state.get("status") in ("RUNNING", "HALTED"):
+                return self._snapshot()
+            self.run_state = self._idle_run()
+            self.run_state.update({"id": uuid.uuid4().hex[:12], "status": "RUNNING", "started_at": _now()})
+            self.decisions = {}
+            self._event("Run requested by the planner", "info")
+        threading.Thread(target=self._execute, daemon=True).start()
+        return self.run()
+
+    def _execute(self) -> None:
+        try:
+            state = self.workflow.run(self.goal, ACTOR, dict(self.constraints))
+            with self._lock:
+                self._finish(state)
+        except Exception as exc:
+            with self._lock:
+                self.run_state["status"] = "FAILED"
+                self.run_state["error"] = f"{type(exc).__name__}: {exc}"
+                self.run_state["finished_at"] = _now()
+                for stage in self.run_state["stages"]:
+                    if stage["status"] == "running":
+                        self._set_stage(stage["key"], "failed", str(exc))
+                self._event(str(exc), "error")
+
+    def _finish(self, state: Mapping[str, Any]) -> None:
+        solution = dict(state.get("solution") or {})
+        raw_moves = solution.get("moves") or solution.get("recommendations") or []
+        source = state.get("source_data", {})
+        sku_by_id = {str(row.get("sku_id")): row for row in source.get("erp", {}).get("sku_master", {}).get("sku_master", [])}
+        moves = [self._normalise_move(index, move, sku_by_id) for index, move in enumerate(raw_moves, 1)]
+        self.decisions = {move["id"]: "pending" for move in moves}
+        for stage in self.run_state["stages"]:
+            if stage["status"] in ("running", "pending"):
+                self._set_stage(stage["key"], "done")
+        self.run_state.update({
+            "status": "COMPLETE",
+            "finished_at": _now(),
+            "moves": moves,
+            "approval": state.get("approval"),
+            "validation": state.get("validation"),
+            "tokens": {
+                "prompt": self.workflow.nim.prompt_tokens + self.workflow.subagent_nim.prompt_tokens,
+                "completion": self.workflow.nim.completion_tokens + self.workflow.subagent_nim.completion_tokens,
+                "calls": self.workflow.nim.calls + self.workflow.subagent_nim.calls,
+            },
+        })
+        self._event(f"Plan ready: {len(moves)} moves awaiting review", "info")
+
+    @staticmethod
+    def _normalise_move(index: int, raw: Mapping[str, Any], sku_by_id: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+        sku_id = str(raw.get("sku_id", "UNKNOWN"))
+        sku = sku_by_id.get(sku_id, {})
+        return {
+            "id": str(raw.get("move_id", f"MV-{index:03d}")),
+            "priority": index,
+            "sku": str(raw.get("product_name") or sku.get("product_name") or sku_id),
+            "code": sku_id,
+            "abc_class": str(sku.get("abc_class", "")),
+            "from_slot": str(raw.get("from_slot", "Unassigned")),
+            "to_slot": str(raw.get("to_slot", "Unassigned")),
+            "day": int(raw.get("day", 0)),
+            "window": str(raw.get("window", "Low-volume shift")),
+            "reason": str(raw.get("reason", "")),
+            "benefit_hours_per_day": round(float(raw.get("benefit_hours_per_day", 0.0)), 2),
+            "labor_minutes": int(raw.get("labor_minutes", 0)),
+            "alternatives": list(raw.get("alternatives") or []),
+        }
+
+    def _snapshot(self) -> Dict[str, Any]:
+        snapshot = json.loads(json.dumps(self.run_state, default=str))
+        snapshot["decisions"] = dict(self.decisions)
+        snapshot["constraints"] = dict(self.constraints)
+        snapshot["goal"] = self.goal
+        return snapshot
+
+    def run(self) -> Dict[str, Any]:
+        with self._lock:
+            return self._snapshot()
+
+    # ---------------------------------------------------------------- review
+
+    def decide(self, move_id: str, decision: str) -> Dict[str, Any]:
+        if decision not in ("approved", "rejected", "pending"):
+            raise ValueError(f"Unknown decision: {decision}")
+        if move_id == "*":
+            self.decisions = {key: decision for key in self.decisions}
+        elif move_id in self.decisions:
+            self.decisions[move_id] = decision
+        else:
+            raise KeyError(f"Unknown move: {move_id}")
+        return self.run()
+
+    def commit(self) -> Dict[str, Any]:
+        """Start the WMS write. write_wms is per_call, so the governor holds it."""
+        if self.commit_state.get("status") == "AWAITING_APPROVAL":
+            return dict(self.commit_state)
+        if self.run_state.get("status") != "COMPLETE":
+            raise RuntimeError("There is no completed plan to commit")
+        approval = self.run_state.get("approval") or {}
         approval_id = approval.get("approval_id")
         if not approval_id:
-            raise RuntimeError("The workflow did not create an approval record")
-        self.workflow.approvals.decide(approval_id, "hackathon-supervisor", True, "Approved in planner showcase")
-        for move in self.view_state.get("moves", []):
-            move["status"] = "Approved"
-        self.view_state["approval_status"] = "APPROVED"
-        return self.view_state
+            raise RuntimeError("The workflow did not raise an approval record")
+        approved = [move for move in self.run_state["moves"] if self.decisions.get(move["id"]) == "approved"]
+        if not approved:
+            raise RuntimeError("No moves have been approved")
 
-    def _to_view_state(self, workflow_state: Mapping[str, Any]) -> Dict[str, Any]:
-        solution = dict(workflow_state.get("solution", {}))
-        raw_moves = solution.get("moves", solution.get("recommendations", []))
-        if not isinstance(raw_moves, list):
-            raise ValueError("cuOpt response must contain a moves or recommendations list")
-        source = workflow_state.get("source_data", {})
-        sku_rows = source.get("erp", {}).get("sku_master", {}).get("sku_master", [])
-        sku_by_id = {str(row.get("sku_id")): row for row in sku_rows}
-        moves = [self._normalize_move(index, move, sku_by_id) for index, move in enumerate(raw_moves, 1)]
-        metrics = solution.get("metrics", solution.get("impact_metrics", {}))
-        zones = self._zones(source.get("wms", {}))
-        trace = workflow_state.get("trace", [])
-        specialist = workflow_state.get("specialist_analysis", {})
+        self.commit_state = {"status": "AWAITING_APPROVAL", "service": "write_wms", "error": None, "commit": None}
+        threading.Thread(target=self._do_commit, args=(approval_id, approved), daemon=True).start()
+        return dict(self.commit_state)
+
+    def commit_status(self) -> Dict[str, Any]:
+        return dict(self.commit_state)
+
+    def _do_commit(self, approval_id: str, approved: List[Dict[str, Any]]) -> None:
+        try:
+            decision = self.workflow.openshell.authorize("write_wms", ACTOR, approval_id, wait_seconds=WRITE_APPROVAL_WAIT_SECONDS)
+            if not decision.allowed:
+                self.commit_state = {"status": "DENIED", "service": "write_wms", "error": decision.reason, "commit": None}
+                return
+            self.workflow.approvals.decide(approval_id, ACTOR, True, "Approved in WarehouseIQ")
+            payload = [
+                {"sku_id": move["code"], "from_slot": move["from_slot"], "to_slot": move["to_slot"], "move_id": move["id"]}
+                for move in approved
+            ]
+            kpis_before = warehouse_kpis(self._source_data())
+            result = self.workflow.wms.apply_approved_moves(payload, approval_id)
+            record = {
+                "at": _now(),
+                "approval_id": approval_id,
+                "moves": len(payload),
+                "relocated": int(result.get("relocated", len(payload))),
+                "rejected": sum(1 for value in self.decisions.values() if value == "rejected"),
+                # Kept so the cockpit can draw what was actually executed once
+                # the plan itself is gone.
+                "applied": [dict(move) for move in approved],
+                "kpis_before": kpis_before,
+                "kpis_after": warehouse_kpis(self._source_data()),
+            }
+            self.commit_history.append(record)
+            with self._lock:
+                self.run_state = self._idle_run()
+                self.decisions = {}
+            self.commit_state = {"status": "COMMITTED", "service": "write_wms", "error": None, "commit": record}
+        except Exception as exc:
+            self.commit_state = {"status": "FAILED", "service": "write_wms", "error": f"{type(exc).__name__}: {exc}", "commit": None}
+
+    # ---------------------------------------------------------------- openshell
+
+    def _governor(self, path: str, method: str = "GET", payload: Mapping[str, Any] | None = None) -> Any:
+        base = self.config.openshell_url.rstrip("/")
+        if not base:
+            raise RuntimeError("OPENSHELL_URL is not configured")
+        data = json.dumps(payload).encode() if payload is not None else None
+        request = urllib.request.Request(base + path, data=data, headers={"Content-Type": "application/json"}, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=self.config.request_timeout_seconds) as response:
+                body = response.read().decode()
+                return json.loads(body) if body else {}
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(f"OpenShell governor returned {exc.code}: {exc.read().decode()[:200]}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"OpenShell governor is unreachable at {base}: {exc}") from exc
+
+    def openshell_overview(self) -> Dict[str, Any]:
         return {
-            "mode": "LIVE LANGGRAPH",
-            "version": self.version,
-            "headline": solution.get("headline", "Seven-day optimized move plan"),
-            "subhead": "Derived from synthetic WMS, ERP, and forecast services",
-            "metrics": {
-                "travel_reduction": self._number(metrics, "travel_reduction_pct", "picker_travel_reduction_pct"),
-                "replenishment_reduction": self._number(metrics, "replenishment_reduction_pct"),
-                "move_count": len(moves),
-                "labor_minutes": sum(int(move["labor"]) for move in moves),
-                "violations": int(self._number(metrics, "constraint_violations")),
-                "plan_value": self._number(metrics, "plan_value", "objective_value"),
+            "endpoint": self.config.openshell_url,
+            "services": self._governor("/api/v1/services"),
+            "grants": self._governor("/api/v1/grants"),
+            "pending": self._governor("/api/v1/requests?status=pending"),
+            "audit": self._governor("/api/v1/audit?limit=40"),
+            "telemetry": self.telemetry(),
+        }
+
+    def telemetry(self) -> Dict[str, Any]:
+        supervisor, subagent = self.workflow.nim, self.workflow.subagent_nim
+        return {
+            "models": [
+                {"role": "supervisor", "model": supervisor.model, "endpoint": supervisor.active_endpoint, "calls": supervisor.calls, "prompt_tokens": supervisor.prompt_tokens, "completion_tokens": supervisor.completion_tokens},
+                {"role": "specialists", "model": subagent.model, "endpoint": subagent.active_endpoint, "calls": subagent.calls, "prompt_tokens": subagent.prompt_tokens, "completion_tokens": subagent.completion_tokens},
+            ],
+            "totals": {
+                "calls": supervisor.calls + subagent.calls,
+                "prompt_tokens": supervisor.prompt_tokens + subagent.prompt_tokens,
+                "completion_tokens": supervisor.completion_tokens + subagent.completion_tokens,
             },
-            "moves": moves,
-            "constraints": dict(self.constraints),
-            "zones": zones,
-            "agents": self._agents(trace, specialist, len(moves)),
-            "services": self.service_status(),
-            "explanation": self._explanation(solution, moves),
-            "approval_id": workflow_state.get("approval", {}).get("approval_id"),
-            "approval_status": workflow_state.get("approval", {}).get("status", "PENDING"),
-            "data_counts": {"skus": len(sku_rows), "slots": len(source.get("wms", {}).get("warehouse_layout", [])), "forecast_rows": len(source.get("forecast", {}).get("forecast", []))},
+            "commits": len(self.commit_history),
         }
 
-    @staticmethod
-    def _normalize_move(index: int, raw: Mapping[str, Any], sku_by_id: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
-        sku_id = str(raw.get("sku_id", raw.get("sku", "UNKNOWN")))
-        sku = sku_by_id.get(sku_id, {})
-        move_type = str(raw.get("type", raw.get("category", "travel"))).lower()
-        if move_type not in {"travel", "replenishment", "safety"}:
-            move_type = "travel"
-        return {
-            "id": str(raw.get("move_id", raw.get("id", f"MV-{index:03d}"))),
-            "priority": int(raw.get("priority", index)),
-            "day": max(0, min(6, int(raw.get("day", raw.get("day_offset", 0))))),
-            "window": str(raw.get("window", raw.get("execution_window", "Low-volume shift"))),
-            "sku": str(raw.get("product_name", sku.get("product_name", sku_id))),
-            "code": sku_id,
-            "from": str(raw.get("from_slot", raw.get("from", "Unassigned"))),
-            "to": str(raw.get("to_slot", raw.get("to", "Unassigned"))),
-            "reason": str(raw.get("reason", raw.get("rationale", "cuOpt-selected feasible move"))),
-            "benefit": float(raw.get("benefit_hours_per_day", raw.get("benefit", 0))),
-            "labor": int(raw.get("labor_minutes", raw.get("labor", 0))),
-            "status": str(raw.get("status", "Awaiting approval")),
-            "type": move_type,
-            "confidence": int(float(raw.get("confidence", 0.9)) * 100) if float(raw.get("confidence", 0.9)) <= 1 else int(float(raw.get("confidence", 90))),
-        }
+    def resolve_request(self, request_id: str, approve: bool) -> Dict[str, Any]:
+        action = "approve" if approve else "deny"
+        self._governor(f"/api/v1/requests/{request_id}/{action}", "POST", {"resolved_by": "warehouseiq-admin"})
+        return self.openshell_overview()
 
-    @staticmethod
-    def _number(values: Mapping[str, Any], *keys: str) -> float:
-        for key in keys:
-            if key in values:
-                return round(float(values[key]), 1)
-        return 0.0
-
-    @staticmethod
-    def _zones(wms: Mapping[str, Any]) -> list[Dict[str, Any]]:
-        layout = wms.get("warehouse_layout", [])
-        occupancy = wms.get("slot_occupancy", [])
-        occupied_by_zone: Dict[int, int] = {}
-        for row in occupancy:
-            zone = int(row.get("zone_id", 0))
-            occupied_by_zone[zone] = occupied_by_zone.get(zone, 0) + 1
-        zones = []
-        for zone in sorted({int(row.get("zone_id", 0)) for row in layout}):
-            rows = [row for row in layout if int(row.get("zone_id", 0)) == zone]
-            utilization = round(occupied_by_zone.get(zone, 0) / max(len(rows), 1) * 100)
-            zones.append({"id": chr(64 + zone), "label": "Forward pick" if zone == 1 else "Reserve", "utilization": utilization, "distance": round(sum(float(row.get("distance_to_picking_m", 0)) for row in rows) / max(len(rows), 1)), "tone": ("hot", "warm", "mid", "cool", "cold", "cold")[min(zone - 1, 5)]})
-        return zones
-
-    @staticmethod
-    def _agents(trace: list[Mapping[str, Any]], specialist: Mapping[str, Any], move_count: int) -> list[Dict[str, str]]:
-        details = {
-            "demand": str(specialist.get("demand", {}).get("summary", specialist.get("demand", {}).get("status", "Analysis complete"))),
-            "inventory": str(specialist.get("inventory", {}).get("summary", specialist.get("inventory", {}).get("status", "Analysis complete"))),
-            "warehouse": str(specialist.get("warehouse", {}).get("summary", specialist.get("warehouse", {}).get("status", "Analysis complete"))),
-        }
-        return [{"name": name.title(), "status": "complete", "detail": details[name]} for name in ("demand", "inventory", "warehouse")] + [{"name": "Orchestrator", "status": "complete", "detail": f"{move_count} cuOpt moves validated · {len(trace)} graph events"}]
-
-    @staticmethod
-    def _explanation(solution: Mapping[str, Any], moves: list[Mapping[str, Any]]) -> str:
-        explanation = solution.get("explanation", solution.get("rationale", solution.get("summary")))
-        if explanation:
-            return str(explanation)
-        if not moves:
-            return "cuOpt returned a feasible plan with no relocation moves for the current constraints."
-        top = moves[0]
-        return f"Move {top['sku']} from {top['from']} to {top['to']} during {top['window']}. {top['reason']}. Expected benefit: {top['benefit']} picker-hours per day for {top['labor']} minutes of relocation work."
-
-    @staticmethod
-    def service_status() -> list[Dict[str, str]]:
-        checks = [("NVIDIA NIM", "NIM_BASE_URL"), ("NVIDIA cuOpt", "CUOPT_URL"), ("NeMo Guardrails", "NEMO_GUARDRAILS_URL"), ("OpenShell", "OPENSHELL_URL")]
-        return [{"name": name, "status": "configured" if os.getenv(key) else "awaiting env"} for name, key in checks]
+    def revoke_grant(self, user: str, service: str) -> Dict[str, Any]:
+        self._governor(f"/api/v1/grants/{user}/{service}", "DELETE")
+        return self.openshell_overview()

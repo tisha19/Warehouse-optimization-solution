@@ -1,0 +1,108 @@
+/* ===== WarehouseIQ global app layout ===== */
+.app-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+    background: var(--bg-app);
+    overflow: hidden;
+}
+
+.app-body {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: grid;
+}
+
+/* Cockpit: info rail + warehouse viewport + insight rail */
+.app-body.layout-cockpit {
+    grid-template-columns: 372px 1fr 340px;
+}
+
+/* Move plan: constraint rail + plan workspace */
+.app-body.layout-plan {
+    grid-template-columns: 320px 1fr;
+}
+
+/* Workflow / OpenShell paint themselves over the body */
+.app-body.layout-full {
+    grid-template-columns: 1fr;
+    position: relative;
+}
+
+.info-region {
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border-subtle);
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+}
+
+.insight-region {
+    background: var(--bg-panel);
+    border-left: 1px solid var(--border-subtle);
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+}
+
+.viewport-region {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    background: radial-gradient(circle at 50% 30%, #0c1524 0%, #05080f 100%);
+}
+
+@media (max-width: 1500px) {
+    .app-body.layout-cockpit {
+        grid-template-columns: 330px 1fr 300px;
+    }
+}
+
+@media (max-width: 1280px) {
+    .app-body.layout-cockpit {
+        grid-template-columns: 300px 1fr;
+    }
+    .insight-region {
+        display: none;
+    }
+    .app-body.layout-plan {
+        grid-template-columns: 280px 1fr;
+    }
+}
+
+/* Global error banner � surfaced whenever a backend call fails. */
+.app-error {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 9px 22px;
+    background: var(--alert-bg);
+    border-bottom: 1px solid var(--alert-border);
+    color: var(--alert-text);
+    font-size: 12.5px;
+}
+.app-error span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.app-error button {
+    margin-left: auto;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--alert-text);
+    border: 1px solid var(--alert-border);
+    border-radius: var(--radius-sm);
+    padding: 4px 10px;
+}
+
+/* The OpenShell console is a fixed overlay, so the banner is lifted above it. */
+.app-error {
+    position: relative;
+    z-index: 60;
+}

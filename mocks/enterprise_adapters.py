@@ -14,8 +14,8 @@ class SyntheticWMSAdapter:
 
     def apply_approved_moves(self, moves: Iterable[Mapping[str, Any]], approval_id: str) -> Dict[str, Any]:
         applied = list(moves)
-        self.state.applied_moves.extend(applied)
-        return {"status": "APPLIED", "approval_id": approval_id, "moves": applied}
+        relocated = self.state.apply_moves(applied)
+        return {"status": "APPLIED", "approval_id": approval_id, "moves": applied, "relocated": relocated}
 
 
 class SyntheticERPAdapter:

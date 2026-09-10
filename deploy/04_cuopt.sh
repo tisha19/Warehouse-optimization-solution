@@ -26,6 +26,7 @@ start_container warehouse-cuopt-adapter \
   --network host \
   -e CUOPT_SERVER_URL="http://${SERVICE_HOST}:${CUOPT_SERVER_PORT}" \
   -e CUOPT_SOLVE_PATH="${CUOPT_SOLVE_PATH:-/cuopt/request}" \
+  -e CUOPT_RESULT_PATH="${CUOPT_RESULT_PATH:-/cuopt/solution}" \
   -e ADAPTER_PORT="${CUOPT_ADAPTER_PORT}" \
   warehouse-cuopt-adapter
 
