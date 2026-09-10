@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # Runs the whole self-hosted stack as a BATCH job so it survives SSH disconnects.
 #   sbatch deploy/slurm_stack.sbatch
+# Once the team GPU quota is raised, request more without editing this file:
+#   sbatch --gres=gpu:N deploy/slurm_stack.sbatch
 #SBATCH --job-name=warehouse-stack
 #SBATCH --partition=hackathon
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=64
-#SBATCH --time=08:00:00
+# The QoS ceiling is 30-12:00:00 and a running job's limit cannot be raised
+# without admin rights, so the stack is sized for the maximum up front.
+#SBATCH --time=30-00:00:00
+#SBATCH --requeue
 #SBATCH --output=%x-%j.log
 #SBATCH --signal=B:TERM@60
 
