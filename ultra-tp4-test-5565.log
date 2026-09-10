@@ -1,0 +1,344 @@
+[test] node=dgx03 job=5565 gpus=4 cpus=64
+
+=========================================================
+[1;32m✓ Rootless Docker daemon started successfully![0m
+---------------------------------------------------------
+[1;32m✓ Includes Buildx and Docker Compose [0m
+---------------------------------------------------------
+[1;33mREMINDER:[0m Shared cluster resources are valuable.
+The Rootless Docker daemon will be stopped when the slurm job ends automaticly
+If you have to stop and restart rootless docker it can be done by the following:
+  [1;36m$ stop_rootless_docker[0m
+  [1;36m$ start_rootless_docker[0m
+=========================================================
+
+=== 1. stopping GPU consumers ===
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+
+=== 2. starting Ultra on devices 0-3, TP=4 ===
+Unable to find image 'nvcr.io/nim/nvidia/nemotron-3-ultra-550b-a55b:2.0.12' locally
+2.0.12: Pulling from nim/nvidia/nemotron-3-ultra-550b-a55b
+cf57d2112d89: Already exists
+c567a87f21d2: Already exists
+0b3b5bd92824: Already exists
+70f87b6ed43e: Already exists
+526d5438c009: Already exists
+afe4bfa39c7a: Pulling fs layer
+b6c805f11f56: Pulling fs layer
+027e849d5520: Pulling fs layer
+bc2b304753bd: Pulling fs layer
+2a976ba9ea4e: Pulling fs layer
+c155b5f73527: Pulling fs layer
+19b08a69602d: Pulling fs layer
+0532ffc6b715: Pulling fs layer
+23bd0472ec62: Pulling fs layer
+3a72487bb83a: Pulling fs layer
+152364ffa4ca: Pulling fs layer
+f1e1ae4913d6: Pulling fs layer
+c42386fa1101: Pulling fs layer
+e81fbf7db412: Pulling fs layer
+74cb8e7224a3: Pulling fs layer
+5e6c54307d98: Pulling fs layer
+e01d89327897: Pulling fs layer
+cc1274a17fb4: Pulling fs layer
+585a0598f315: Pulling fs layer
+4f4fb700ef54: Pulling fs layer
+bf44cfef95ac: Pulling fs layer
+67cdffb5f318: Pulling fs layer
+77c1abc9192f: Pulling fs layer
+30331a051795: Pulling fs layer
+074d893f38f6: Pulling fs layer
+e57766cd702c: Pulling fs layer
+5afb1ce26259: Pulling fs layer
+71d9c5cd742e: Pulling fs layer
+632eecd175e5: Pulling fs layer
+36cde89b414e: Pulling fs layer
+e1ae0dbf086c: Pulling fs layer
+5f2fffdffb0f: Pulling fs layer
+1357b4510a7b: Pulling fs layer
+a7690a6516f3: Pulling fs layer
+addea9cb2388: Pulling fs layer
+9dadfeedbe4c: Pulling fs layer
+c8ea0f1c928d: Pulling fs layer
+af07861fc418: Pulling fs layer
+e22a2a6ad07f: Pulling fs layer
+fa197a43462e: Pulling fs layer
+8d8ce0b034f7: Pulling fs layer
+7499eecc1d2a: Pulling fs layer
+0875d295f82c: Pulling fs layer
+6d866717907e: Pulling fs layer
+0949f52588e1: Pulling fs layer
+f38bc8a5da22: Pulling fs layer
+5431b6dfc589: Pulling fs layer
+9274cd927b18: Pulling fs layer
+bd330c8deede: Pulling fs layer
+d0fe9a34c245: Pulling fs layer
+68cf13e43ae0: Pulling fs layer
+32816ded697e: Pulling fs layer
+3df9bb5d6414: Pulling fs layer
+5bb97b646c16: Pulling fs layer
+e038acab8777: Pulling fs layer
+5820661c8f90: Pulling fs layer
+2a976ba9ea4e: Waiting
+b658351a2061: Pulling fs layer
+750c865eb156: Pulling fs layer
+eff468219cb1: Pulling fs layer
+c155b5f73527: Waiting
+bdb52d614622: Pulling fs layer
+1b8c4b25b8d4: Pulling fs layer
+19b08a69602d: Waiting
+0532ffc6b715: Waiting
+23bd0472ec62: Waiting
+3a72487bb83a: Waiting
+152364ffa4ca: Waiting
+f1e1ae4913d6: Waiting
+c42386fa1101: Waiting
+e81fbf7db412: Waiting
+74cb8e7224a3: Waiting
+5e6c54307d98: Waiting
+e01d89327897: Waiting
+cc1274a17fb4: Waiting
+585a0598f315: Waiting
+bc2b304753bd: Waiting
+4f4fb700ef54: Waiting
+0875d295f82c: Waiting
+6d866717907e: Waiting
+0949f52588e1: Waiting
+5f2fffdffb0f: Waiting
+1357b4510a7b: Waiting
+a7690a6516f3: Waiting
+bf44cfef95ac: Waiting
+addea9cb2388: Waiting
+fa197a43462e: Waiting
+5afb1ce26259: Waiting
+71d9c5cd742e: Waiting
+9dadfeedbe4c: Waiting
+c8ea0f1c928d: Waiting
+e22a2a6ad07f: Waiting
+7499eecc1d2a: Waiting
+8d8ce0b034f7: Waiting
+5820661c8f90: Waiting
+67cdffb5f318: Waiting
+f38bc8a5da22: Waiting
+77c1abc9192f: Waiting
+5431b6dfc589: Waiting
+30331a051795: Waiting
+074d893f38f6: Waiting
+750c865eb156: Waiting
+af07861fc418: Waiting
+9274cd927b18: Waiting
+bd330c8deede: Waiting
+d0fe9a34c245: Waiting
+68cf13e43ae0: Waiting
+32816ded697e: Waiting
+3df9bb5d6414: Waiting
+5bb97b646c16: Waiting
+e038acab8777: Waiting
+eff468219cb1: Waiting
+e1ae0dbf086c: Waiting
+1b8c4b25b8d4: Waiting
+bdb52d614622: Waiting
+b658351a2061: Waiting
+e57766cd702c: Waiting
+632eecd175e5: Waiting
+afe4bfa39c7a: Verifying Checksum
+afe4bfa39c7a: Download complete
+b6c805f11f56: Verifying Checksum
+b6c805f11f56: Download complete
+afe4bfa39c7a: Pull complete
+b6c805f11f56: Pull complete
+2a976ba9ea4e: Verifying Checksum
+2a976ba9ea4e: Download complete
+c155b5f73527: Download complete
+19b08a69602d: Verifying Checksum
+19b08a69602d: Download complete
+0532ffc6b715: Download complete
+23bd0472ec62: Verifying Checksum
+23bd0472ec62: Download complete
+3a72487bb83a: Verifying Checksum
+3a72487bb83a: Download complete
+152364ffa4ca: Verifying Checksum
+152364ffa4ca: Download complete
+027e849d5520: Verifying Checksum
+027e849d5520: Download complete
+bc2b304753bd: Verifying Checksum
+bc2b304753bd: Download complete
+e81fbf7db412: Download complete
+74cb8e7224a3: Download complete
+5e6c54307d98: Verifying Checksum
+5e6c54307d98: Download complete
+e01d89327897: Verifying Checksum
+e01d89327897: Download complete
+cc1274a17fb4: Verifying Checksum
+cc1274a17fb4: Download complete
+c42386fa1101: Verifying Checksum
+c42386fa1101: Download complete
+4f4fb700ef54: Download complete
+bf44cfef95ac: Verifying Checksum
+bf44cfef95ac: Download complete
+67cdffb5f318: Verifying Checksum
+67cdffb5f318: Download complete
+77c1abc9192f: Verifying Checksum
+77c1abc9192f: Download complete
+30331a051795: Verifying Checksum
+30331a051795: Download complete
+074d893f38f6: Verifying Checksum
+074d893f38f6: Download complete
+585a0598f315: Verifying Checksum
+585a0598f315: Download complete
+e57766cd702c: Verifying Checksum
+e57766cd702c: Download complete
+71d9c5cd742e: Download complete
+632eecd175e5: Verifying Checksum
+632eecd175e5: Download complete
+36cde89b414e: Verifying Checksum
+36cde89b414e: Download complete
+e1ae0dbf086c: Download complete
+5f2fffdffb0f: Verifying Checksum
+5f2fffdffb0f: Download complete
+1357b4510a7b: Verifying Checksum
+1357b4510a7b: Download complete
+a7690a6516f3: Verifying Checksum
+a7690a6516f3: Download complete
+addea9cb2388: Verifying Checksum
+addea9cb2388: Download complete
+9dadfeedbe4c: Verifying Checksum
+9dadfeedbe4c: Download complete
+c8ea0f1c928d: Download complete
+af07861fc418: Verifying Checksum
+af07861fc418: Download complete
+e22a2a6ad07f: Download complete
+fa197a43462e: Download complete
+8d8ce0b034f7: Verifying Checksum
+8d8ce0b034f7: Download complete
+7499eecc1d2a: Verifying Checksum
+7499eecc1d2a: Download complete
+5afb1ce26259: Verifying Checksum
+5afb1ce26259: Download complete
+6d866717907e: Verifying Checksum
+6d866717907e: Download complete
+0949f52588e1: Download complete
+f38bc8a5da22: Verifying Checksum
+f38bc8a5da22: Download complete
+5431b6dfc589: Verifying Checksum
+5431b6dfc589: Download complete
+9274cd927b18: Verifying Checksum
+9274cd927b18: Download complete
+0875d295f82c: Verifying Checksum
+0875d295f82c: Download complete
+d0fe9a34c245: Verifying Checksum
+d0fe9a34c245: Download complete
+68cf13e43ae0: Verifying Checksum
+68cf13e43ae0: Download complete
+32816ded697e: Verifying Checksum
+32816ded697e: Download complete
+bd330c8deede: Verifying Checksum
+bd330c8deede: Download complete
+027e849d5520: Pull complete
+3df9bb5d6414: Verifying Checksum
+3df9bb5d6414: Download complete
+5820661c8f90: Verifying Checksum
+5820661c8f90: Download complete
+b658351a2061: Download complete
+750c865eb156: Download complete
+eff468219cb1: Verifying Checksum
+eff468219cb1: Download complete
+bdb52d614622: Verifying Checksum
+bdb52d614622: Download complete
+1b8c4b25b8d4: Verifying Checksum
+1b8c4b25b8d4: Download complete
+f1e1ae4913d6: Verifying Checksum
+f1e1ae4913d6: Download complete
+5bb97b646c16: Verifying Checksum
+5bb97b646c16: Download complete
+bc2b304753bd: Pull complete
+2a976ba9ea4e: Pull complete
+c155b5f73527: Pull complete
+19b08a69602d: Pull complete
+0532ffc6b715: Pull complete
+23bd0472ec62: Pull complete
+3a72487bb83a: Pull complete
+152364ffa4ca: Pull complete
+f1e1ae4913d6: Pull complete
+c42386fa1101: Pull complete
+e81fbf7db412: Pull complete
+74cb8e7224a3: Pull complete
+5e6c54307d98: Pull complete
+e01d89327897: Pull complete
+cc1274a17fb4: Pull complete
+585a0598f315: Pull complete
+4f4fb700ef54: Pull complete
+bf44cfef95ac: Pull complete
+67cdffb5f318: Pull complete
+77c1abc9192f: Pull complete
+30331a051795: Pull complete
+074d893f38f6: Pull complete
+e57766cd702c: Pull complete
+5afb1ce26259: Pull complete
+71d9c5cd742e: Pull complete
+632eecd175e5: Pull complete
+36cde89b414e: Pull complete
+e1ae0dbf086c: Pull complete
+5f2fffdffb0f: Pull complete
+1357b4510a7b: Pull complete
+a7690a6516f3: Pull complete
+addea9cb2388: Pull complete
+9dadfeedbe4c: Pull complete
+c8ea0f1c928d: Pull complete
+af07861fc418: Pull complete
+e22a2a6ad07f: Pull complete
+fa197a43462e: Pull complete
+8d8ce0b034f7: Pull complete
+7499eecc1d2a: Pull complete
+0875d295f82c: Pull complete
+6d866717907e: Pull complete
+0949f52588e1: Pull complete
+f38bc8a5da22: Pull complete
+5431b6dfc589: Pull complete
+9274cd927b18: Pull complete
+bd330c8deede: Pull complete
+d0fe9a34c245: Pull complete
+68cf13e43ae0: Pull complete
+32816ded697e: Pull complete
+3df9bb5d6414: Pull complete
+5bb97b646c16: Pull complete
+e038acab8777: Pull complete
+5820661c8f90: Pull complete
+b658351a2061: Pull complete
+750c865eb156: Pull complete
+eff468219cb1: Pull complete
+bdb52d614622: Pull complete
+1b8c4b25b8d4: Pull complete
+Digest: sha256:be21eb9cf4fd407fc25a68b784d5a584d7d02ca909dec67154f3ff98651f0ed1
+Status: Downloaded newer image for nvcr.io/nim/nvidia/nemotron-3-ultra-550b-a55b:2.0.12
+15506eb61e7ee074f29b6449ecc0f0b27dff9bafe7a05b7bb54a8d3141392e96
+
+=== 3. waiting for readiness (up to 90 min) ===
+  [191s] health=503  
+  [392s] health=503  
+  [593s] health=503  
+  [794s] health=503  ucing Torch parallelism from 64 threads to 1 to avoid unnecessary CPU contention. Set OMP_NUM_THREADS in the external environment to tune this value as needed.
+  [995s] health=503  (Worker_TP1 pid=1082) WARNING 09-10 16:06:53 [routed_experts.py:1090] Unexpected gate/up projection names: up_proj, . Fused gate/up mapping will be skipped.
+  [1196s] health=503  
+  [1398s] health=503  ��| 51/51 [00:23<00:00,  1.72it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|██████████| 51/51 [00:23<00:00,  2.15it/s]
+READY after 1428s
+
+=== 4. served model ===
+{"object":"list","data":[{"id":"nvidia/nemotron-3-ultra-550b-a55b","object":"model","created":1789056884,"owned_by":"vllm","root":"/opt/nim/.cache/tmp/nim_vpplp5at","parent":null,"max_model_len":262144,"permission":[{"id":"modelperm-bab2e204124d69d3","object":"model_permission","created":1789056884,"allow_create_engine":false,"allow_sampling":true,"allow_logprobs":true,"allow_search_indices":false,"allow_view":true,"allow_fine_tuning":false,"organization":"*","group":null,"is_blocking":false}]}]}
+
+=== 5. GPU memory with Ultra resident ===
+index, name, memory.total [MiB], memory.used [MiB], utilization.gpu [%]
+0, NVIDIA B300 SXM6 AC, 275040 MiB, 255642 MiB, 0 %
+1, NVIDIA B300 SXM6 AC, 275040 MiB, 255642 MiB, 0 %
+2, NVIDIA B300 SXM6 AC, 275040 MiB, 255642 MiB, 0 %
+3, NVIDIA B300 SXM6 AC, 275040 MiB, 255642 MiB, 0 %
+
+=== 6. inference smoke test ===
+model=nvidia/nemotron-3-ultra-550b-a55b
+{"id":"chatcmpl-ac15589d7f9f6005","object":"chat.completion","created":1789056884,"model":"nvidia/nemotron-3-ultra-550b-a55b","choices":[{"index":0,"message":{"role":"assistant","content":null,"refusal":null,"annotations":null,"audio":null,"function_call":null,"reasoning":"The user wants me to reply with exactly \"OK\". I need to make sure"},"logprobs":null,"finish_reason":"length","stop_reason":null,"token_ids":null,"routed_experts":null}],"service_tier":null,"system_fingerprint":"vllm-0.27.1-tp4-db975e8e","usage":{"prompt_tokens":21,"total_tokens":37,"completion_tokens":16,"prompt_tokens_details":null},"prompt_logprobs":null,"prompt_token_ids":null,"prompt_text":null,"kv_transfer_params":n
+latency_ms=3093
+
+[test] exit=0 - tearing down

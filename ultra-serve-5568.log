@@ -1,0 +1,17 @@
+
+=========================================================
+[1;32m✓ Rootless Docker daemon started successfully![0m
+---------------------------------------------------------
+[1;32m✓ Includes Buildx and Docker Compose [0m
+---------------------------------------------------------
+[1;33mREMINDER:[0m Shared cluster resources are valuable.
+The Rootless Docker daemon will be stopped when the slurm job ends automaticly
+If you have to stop and restart rootless docker it can be done by the following:
+  [1;36m$ stop_rootless_docker[0m
+  [1;36m$ start_rootless_docker[0m
+=========================================================
+
+[serve] node=dgx03 job=5568 gpus=4
+3d446485d77948215fc3ff88bd27ab8b4e4a1d662a113bf4d812810a9a6136a7
+[serve] 191s health=503
+[2026-09-10T09:26:34.468] error: *** JOB 5568 ON dgx03 CANCELLED AT 2026-09-10T09:26:34 DUE to SIGNAL Terminated ***
