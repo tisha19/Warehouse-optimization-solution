@@ -24,7 +24,13 @@ export default function CockpitScreen() {
     const addressable = dashboard.problems.filter((p) => p.addressable)
     const notes = dashboard.problems.filter((p) => !p.addressable)
     const headline = demand.headline
-    const moves = run?.status === 'COMPLETE' ? run.moves : []
+    const planned = run?.status === 'COMPLETE' ? run.moves : []
+    // Once a plan is written the plan itself is gone, so the map falls back to
+    // the relocations that were actually executed.
+    const committed = dashboard.last_commit?.applied ?? []
+    const moves = planned.length > 0 ? planned : committed
+    const showingCommitted = planned.length === 0 && committed.length > 0
+    const lastCommit = dashboard.last_commit
 
     return (
         <div className="app-body layout-cockpit">
@@ -94,6 +100,7 @@ export default function CockpitScreen() {
                     selectedMoveId={selectedMove}
                     onSelectMove={setSelectedMove}
                     hasPlan={moves.length > 0}
+                    executed={showingCommitted}
                 />
                 {selectedMove && (
                     <div className="ck-movecard">
@@ -174,7 +181,11 @@ export default function CockpitScreen() {
                             <CheckCircle2 size={16} />
                             <div>
                                 <strong>No slotting problems outstanding.</strong>
-                                <p>Class A demand is served from the forward pick face and the average pick trip is within target.</p>
+                                <p>
+                                    {lastCommit
+                                        ? `Class A demand is served from the forward pick face at ${dashboard.kpis.forward_pick_coverage_pct}% and the average pick trip is ${dashboard.kpis.avg_distance_per_pick_m}m, after ${dashboard.relocated_total} relocations were committed.`
+                                        : `Class A demand is served from the forward pick face at ${dashboard.kpis.forward_pick_coverage_pct}% and the average pick trip is ${dashboard.kpis.avg_distance_per_pick_m}m.`}
+                                </p>
                             </div>
                         </div>
                     )}
@@ -191,16 +202,38 @@ export default function CockpitScreen() {
 
                 <section className="ck-panel ck-next">
                     <div className="ck-panel__head">
-                        <span>What happens next</span>
+                        <span>{addressable.length ? 'What happens next' : 'Plan executed'}</span>
                     </div>
-                    <p className="ck-next__text">
-                        {addressable.length
-                            ? 'The DeepAgent reads this state, the specialists assess it, and cuOpt solves a constrained move plan. Nothing reaches the WMS without your approval.'
-                            : 'There is nothing for the planner to act on. Generate a different warehouse to run the flow again.'}
-                    </p>
-                    <Link className={`ck-btn ck-btn--primary${addressable.length ? '' : ' is-disabled'}`} to="/plan">
-                        Build the move plan <ArrowRight size={15} />
-                    </Link>
+                    {addressable.length ? (
+                        <>
+                            <p className="ck-next__text">
+                                The DeepAgent reads this state, the specialists assess it, and cuOpt solves a constrained move
+                                plan. Nothing reaches the WMS without your approval.
+                            </p>
+                            <Link className="ck-btn ck-btn--primary" to="/plan">
+                                Build the move plan <ArrowRight size={15} />
+                            </Link>
+                        </>
+                    ) : lastCommit ? (
+                        <>
+                            <p className="ck-next__text">
+                                <b>{dashboard.relocated_total}</b> relocations have been written to the WMS, the last at{' '}
+                                {new Date(lastCommit.at).toLocaleTimeString()}. Against the warehouse as first measured, picker
+                                travel is down from <b>{dashboard.baseline?.daily_travel_km} km/day</b> to{' '}
+                                <b>{dashboard.kpis.daily_travel_km} km/day</b> and the average pick trip from{' '}
+                                <b>{dashboard.baseline?.avg_distance_per_pick_m}m</b> to{' '}
+                                <b>{dashboard.kpis.avg_distance_per_pick_m}m</b>.
+                            </p>
+                            <p className="ck-next__text">
+                                cuOpt finds no further relocation that shortens travel under the current constraints. Generate a
+                                different warehouse to run the flow again.
+                            </p>
+                        </>
+                    ) : (
+                        <p className="ck-next__text">
+                            There is nothing for the planner to act on. Generate a different warehouse to run the flow again.
+                        </p>
+                    )}
                 </section>
             </aside>
         </div>

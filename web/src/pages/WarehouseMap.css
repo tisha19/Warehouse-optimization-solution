@@ -263,3 +263,10 @@
 .wmap__move.is-dimmed {
     opacity: 0.12;
 }
+/* Relocations already written to the WMS, as opposed to a proposal. */
+.wmap__move.is-done {
+    stroke: var(--status-green);
+}
+.wmap__key--done {
+    background: var(--status-green);
+}

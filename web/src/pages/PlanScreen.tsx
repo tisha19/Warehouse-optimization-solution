@@ -110,8 +110,8 @@ export default function PlanScreen() {
                             <input
                                 type="range"
                                 min={1}
-                                max={40}
-                                value={constraints?.max_moves ?? 10}
+                                max={120}
+                                value={constraints?.max_moves ?? 30}
                                 onChange={(event) => void setConstraints({ max_moves: Number(event.target.value) })}
                             />
                             <span className="pl-range__detail">Hard cap enforced by cuOpt</span>

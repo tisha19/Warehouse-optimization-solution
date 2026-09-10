@@ -34,9 +34,11 @@ type Props = {
     selectedMoveId: string | null
     onSelectMove: (id: string | null) => void
     hasPlan: boolean
+    /** The arcs are relocations already written to the WMS, not a proposal. */
+    executed?: boolean
 }
 
-export default function WarehouseMap({ slots, moves, selectedMoveId, onSelectMove, hasPlan }: Props) {
+export default function WarehouseMap({ slots, moves, selectedMoveId, onSelectMove, hasPlan, executed = false }: Props) {
     const [showHeat, setShowHeat] = useState(true)
 
     const geo: Geometry = useMemo(
@@ -79,10 +81,16 @@ export default function WarehouseMap({ slots, moves, selectedMoveId, onSelectMov
         <div className="wmap">
             <div className="wmap__head">
                 <div>
-                    <h2 className="wmap__title">Pick module · {hasPlan ? 'proposed layout' : 'current slotting'}</h2>
+                    <h2 className="wmap__title">
+                        Pick module · {executed ? 'committed layout' : hasPlan ? 'proposed layout' : 'current slotting'}
+                    </h2>
                     <p className="wmap__sub">
                         {slots.length} slots · {zones.length} zones × {geo.aisles} aisles × {geo.bays} bays × {geo.levels} levels
-                        {hasPlan ? ' · proposed moves drawn as arcs' : ' · no plan yet'}
+                        {executed
+                            ? ' · relocations from the last committed plan drawn as arcs'
+                            : hasPlan
+                              ? ' · proposed moves drawn as arcs'
+                              : ' · no plan yet'}
                     </p>
                 </div>
                 <div className="wmap__tools">
@@ -95,7 +103,8 @@ export default function WarehouseMap({ slots, moves, selectedMoveId, onSelectMov
                         <span className="wmap__key wmap__key--c" /> C-class
                         {hasPlan && (
                             <>
-                                <span className="wmap__key wmap__key--move" /> proposed move
+                                <span className={`wmap__key wmap__key--${executed ? 'done' : 'move'}`} />{' '}
+                                {executed ? 'executed move' : 'proposed move'}
                             </>
                         )}
                     </span>
@@ -107,6 +116,9 @@ export default function WarehouseMap({ slots, moves, selectedMoveId, onSelectMov
                     <defs>
                         <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
                             <path d="M0 0 L6 3 L0 6 z" fill="#38bdf8" />
+                        </marker>
+                        <marker id="arrowDone" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+                            <path d="M0 0 L6 3 L0 6 z" fill="#34d399" />
                         </marker>
                         <marker id="arrowSel" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
                             <path d="M0 0 L6 3 L0 6 z" fill="#fbbf24" />
@@ -219,8 +231,8 @@ export default function WarehouseMap({ slots, moves, selectedMoveId, onSelectMov
                                 <path d={d} className="wmap__movehit" />
                                 <path
                                     d={d}
-                                    className={`wmap__move${selected ? ' is-selected' : ''}${dimmed ? ' is-dimmed' : ''}`}
-                                    markerEnd={selected ? 'url(#arrowSel)' : 'url(#arrow)'}
+                                    className={`wmap__move${executed ? ' is-done' : ''}${selected ? ' is-selected' : ''}${dimmed ? ' is-dimmed' : ''}`}
+                                    markerEnd={selected ? 'url(#arrowSel)' : executed ? 'url(#arrowDone)' : 'url(#arrow)'}
                                 />
                                 <title>
                                     {move.id} · {move.sku} · {move.from_slot} → {move.to_slot} · {move.benefit_hours_per_day} hr/day
@@ -241,7 +253,7 @@ export default function WarehouseMap({ slots, moves, selectedMoveId, onSelectMov
                 {hasPlan ? (
                     <>
                         <span className="wmap__footitem">
-                            <b>{moves.length}</b> proposed moves
+                            <b>{moves.length}</b> {executed ? 'relocations executed' : 'proposed moves'}
                         </span>
                         <span className="wmap__footitem wmap__footitem--hint">Click a move arc to open its explanation</span>
                     </>

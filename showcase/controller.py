@@ -53,7 +53,7 @@ class ShowcaseController:
         self.workflow_factory = workflow_factory
         self.config = ProductionConfig.from_env()
         self.goal = GOAL
-        self.constraints: Dict[str, Any] = {"max_moves": 10, "locked_skus": [], "cold_chain_locked": True, "labour_minutes_per_window": 240, "execution_windows": ["low-volume shifts"]}
+        self.constraints: Dict[str, Any] = {"max_moves": 30, "locked_skus": [], "cold_chain_locked": True, "labour_minutes_per_window": 240, "execution_windows": ["low-volume shifts"]}
         self._lock = threading.Lock()
         self._load(resolve_seed(seed))
 
@@ -114,7 +114,7 @@ class ShowcaseController:
             "site": SITE,
             "kpis": kpis,
             "baseline": self.baseline_kpis,
-            "problems": detect_problems(kpis, source),
+            "problems": detect_problems(kpis, source, self.constraints),
             "zones": zones,
             "counts": {
                 "skus": len(source["erp"]["sku_master"]["sku_master"]),
@@ -125,6 +125,8 @@ class ShowcaseController:
             },
             "services": self.service_status(),
             "commits": self.commit_history[-5:],
+            "last_commit": self.commit_history[-1] if self.commit_history else None,
+            "relocated_total": sum(int(c.get("relocated", 0)) for c in self.commit_history),
             "dataset_seed": self.seed,
             "run": {"id": self.run_state.get("id"), "status": self.run_state.get("status")},
             "generated_at": _now(),
@@ -179,7 +181,7 @@ class ShowcaseController:
     def set_constraints(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         """Planner-editable limits; the next run hands these to cuOpt."""
         if "max_moves" in payload:
-            self.constraints["max_moves"] = max(1, min(40, int(payload["max_moves"])))
+            self.constraints["max_moves"] = max(1, min(120, int(payload["max_moves"])))
         if "cold_chain_locked" in payload:
             self.constraints["cold_chain_locked"] = bool(payload["cold_chain_locked"])
         if "locked_skus" in payload:
@@ -445,6 +447,7 @@ class ShowcaseController:
                 {"sku_id": move["code"], "from_slot": move["from_slot"], "to_slot": move["to_slot"], "move_id": move["id"]}
                 for move in approved
             ]
+            kpis_before = warehouse_kpis(self._source_data())
             result = self.workflow.wms.apply_approved_moves(payload, approval_id)
             record = {
                 "at": _now(),
@@ -452,6 +455,11 @@ class ShowcaseController:
                 "moves": len(payload),
                 "relocated": int(result.get("relocated", len(payload))),
                 "rejected": sum(1 for value in self.decisions.values() if value == "rejected"),
+                # Kept so the cockpit can draw what was actually executed once
+                # the plan itself is gone.
+                "applied": [dict(move) for move in approved],
+                "kpis_before": kpis_before,
+                "kpis_after": warehouse_kpis(self._source_data()),
             }
             self.commit_history.append(record)
             with self._lock:

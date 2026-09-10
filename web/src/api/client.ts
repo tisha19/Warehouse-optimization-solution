@@ -23,7 +23,16 @@ export type Zone = { id: string; label: string; slots: number; utilisation: numb
 
 export type Service = { name: string; endpoint: string; detail: string }
 
-export type Commit = { at: string; approval_id: string; moves: number; relocated: number; rejected: number }
+export type Commit = {
+    at: string
+    approval_id: string
+    moves: number
+    relocated: number
+    rejected: number
+    applied: Move[]
+    kpis_before: Kpis
+    kpis_after: Kpis
+}
 
 export type Dashboard = {
     site: string
@@ -34,6 +43,8 @@ export type Dashboard = {
     counts: Record<string, number>
     services: Service[]
     commits: Commit[]
+    last_commit: Commit | null
+    relocated_total: number
     dataset_seed: number
     run: { id: string | null; status: RunStatus }
     generated_at: string

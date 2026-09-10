@@ -35,12 +35,17 @@ CUOPT_SERVER_URL = os.getenv("CUOPT_SERVER_URL", "http://127.0.0.1:5000").rstrip
 CUOPT_SOLVE_PATH = os.getenv("CUOPT_SOLVE_PATH", "/cuopt/request")
 CUOPT_RESULT_PATH = os.getenv("CUOPT_RESULT_PATH", "/cuopt/solution")
 POLL_INTERVAL = float(os.getenv("CUOPT_POLL_INTERVAL_SECONDS", "0.5"))
-REQUEST_TIMEOUT = float(os.getenv("CUOPT_TIMEOUT_SECONDS", "120"))
-MAX_CANDIDATES = int(os.getenv("CUOPT_MAX_CANDIDATES", "40"))
+REQUEST_TIMEOUT = float(os.getenv("CUOPT_TIMEOUT_SECONDS", "600"))
+# The model is every movable SKU against every slot it could occupy. A narrow
+# slice solves in milliseconds but only ever finds a local rearrangement.
+MAX_CANDIDATES = int(os.getenv("CUOPT_MAX_CANDIDATES", "400"))
+# Slots offered per SKU. More choice is a materially better layout, at the cost
+# of a quadratically larger LP.
+SLOTS_PER_CANDIDATE = int(os.getenv("CUOPT_SLOTS_PER_CANDIDATE", "3"))
 # cuOpt 26.08 crashes its solver process in the default concurrent mode (0) on
-# this assignment LP, which dual simplex (2) solves in hundredths of a second.
+# this assignment LP, which dual simplex (2) solves reliably.
 CUOPT_METHOD = int(os.getenv("CUOPT_METHOD", "2"))
-CUOPT_TIME_LIMIT = float(os.getenv("CUOPT_TIME_LIMIT_SECONDS", "30"))
+CUOPT_TIME_LIMIT = float(os.getenv("CUOPT_TIME_LIMIT_SECONDS", "300"))
 # Average picker walking speed, used to convert metres saved into hours saved.
 WALK_SPEED_MPS = float(os.getenv("PICKER_WALK_SPEED_MPS", "1.2"))
 # Fixed pick-and-put allowance per relocation, on top of the walking time.
@@ -110,7 +115,7 @@ def _build_inputs(request: SlottingRequest) -> Tuple[List[Dict[str, Any]], List[
     candidate_ids = {str(sku.get("sku_id")) for sku in candidates}
     available = [row for row in layout if sku_by_slot.get(str(row.get("slot_id")), "") in ("", *candidate_ids)]
     available.sort(key=lambda row: float(row.get("distance_to_picking_m", 0.0)))
-    slots = available[: max(len(candidates), 1)]
+    slots = available[: max(len(candidates) * SLOTS_PER_CANDIDATE, 1)]
 
     max_moves = int(request.constraints.get("max_moves", 10))
     return candidates, slots, current_slot, max_moves, movable
