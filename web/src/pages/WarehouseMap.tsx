@@ -74,6 +74,11 @@ export default function WarehouseMap({ slots, moves, selectedMoveId, onSelectMov
     const zoneBandH = geo.levels * (LEVEL_H + LEVEL_GAP)
     const rowW = geo.aisles * (geo.bays * (BAY_W + BAY_GAP) + AISLE_GAP) - AISLE_GAP
 
+    const dockY = ORIGIN_Y - 24
+    const dockH = height - ORIGIN_Y + 6
+    const dockCx = DOCK_X + DOCK_W / 2
+    const dockCy = dockY + dockH / 2
+
     const occupied = slots.filter((s) => s.occupant).length
     const blocked = slots.filter((s) => s.status !== 'ACTIVE').length
 
@@ -129,12 +134,13 @@ export default function WarehouseMap({ slots, moves, selectedMoveId, onSelectMov
                         </linearGradient>
                     </defs>
 
-                    <rect x={DOCK_X} y={ORIGIN_Y - 24} width={DOCK_W} height={height - ORIGIN_Y + 6} rx="6" fill="url(#dockGrad)" stroke="#2a4a86" />
+                    <rect x={DOCK_X} y={dockY} width={DOCK_W} height={dockH} rx="6" fill="url(#dockGrad)" stroke="#2a4a86" />
                     <text
-                        x={DOCK_X + DOCK_W}
-                        y={height / 2}
+                        x={dockCx}
+                        y={dockCy}
                         className="wmap__docklabel"
-                        transform={`rotate(-90 ${DOCK_X + DOCK_W / 2} ${height / 2})`}
+                        dominantBaseline="central"
+                        transform={`rotate(-90 ${dockCx} ${dockCy})`}
                     >
                         DISPATCH DOCK
                     </text>
