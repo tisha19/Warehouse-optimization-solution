@@ -186,7 +186,7 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    padding: 4px 8px 4px 4px;
+    padding: 6px 12px;
     border-radius: 18px;
     background: var(--bg-card);
     border: 1px solid var(--border-card);
@@ -198,13 +198,6 @@
 .topnav__user:hover {
     border-color: var(--accent-cyan);
     box-shadow: 0 0 12px rgba(56, 189, 248, 0.22);
-}
-.topnav__avatar {
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, #4b6a96, #243a5c);
-    border: 1px solid #355081;
 }
 .topnav__user-name {
     font-size: 12.5px;

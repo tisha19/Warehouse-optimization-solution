@@ -72,7 +72,6 @@ export default function TopNav() {
                     {pending > 0 && <span className="topnav__navbadge">{pending}</span>}
                 </NavLink>
                 <button className="topnav__user" onClick={handleReset} disabled={busy} title="Generate a different warehouse and clear this session">
-                    <span className="topnav__avatar" />
                     <span className="topnav__user-name">New dataset</span>
                     <RotateCcw size={14} className="topnav__user-caret" />
                 </button>
