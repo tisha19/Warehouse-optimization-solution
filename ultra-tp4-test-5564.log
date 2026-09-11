@@ -1,7 +1,0 @@
-[test] node=dgx02 job=5564 gpus=4 cpus=64
-=== 0. starting rootless docker ===
-
-[1;31mError: Docker daemon failed to start. See logs at /raid/docker/tmp/xdg_runtime_dir_1410/dockerd.log[0m
-rootless docker did not start
-
-[test] exit=1 - tearing down

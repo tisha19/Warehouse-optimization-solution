@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
-# Bring up the full self-hosted stack on the current GPU node.
+# Bring up the warehouse stack on the current GPU node.
 # Idempotent: re-running replaces containers that are already there.
 #
-# Default topology keeps the NIM and cuOpt on different GPUs so they cannot
-# contend for memory: Nemotron 3.5 Lightning on GPU 0, cuOpt on GPU 3.
-# Set NIM_PROFILE=ultra to serve Nemotron 3 Ultra instead; it needs tp4 and
-# therefore spans every GPU, which starves cuOpt on a 4-GPU allocation.
+# Both Nemotron models run on NVIDIA's hosted endpoint: Ultra orchestrates and
+# Lightning runs the specialists. We used to serve Lightning ourselves, but the
+# NIM's vLLM build does not recognise the B300's native FP4 support, falls back
+# to Marlin kernels and the engine core dies after loading the weights. Hosting
+# is also the neighbourly choice here: cuOpt is now the only thing that needs a
+# GPU, so the job asks for one instead of four.
+#
+# Ports default to a private 28xxx block. Several teammates share a node and
+# run this same stack, so binding the obvious ports either fails outright or,
+# worse, makes skip_if_up mistake their service for ours and silently wire the
+# app to someone else's containers.
 #
 # Re-running only starts what is not already answering its health check, so it
 # doubles as a resume after a partial bring-up. FORCE=1 recreates everything.
@@ -33,32 +40,49 @@ if ! docker info >/dev/null 2>&1; then
   else
     nohup dockerd-rootless.sh --experimental \
       --data-root="/raid/docker/tmp/docker-container-storage-$(id -u)" \
-      --storage-driver overlay2 > /tmp/dockerd-rootless.log 2>&1 &
+      --storage-driver overlay2 > "/tmp/${USER:-$(id -un)}-dockerd-rootless.log" 2>&1 &
   fi
   for _ in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done
 fi
-docker info >/dev/null 2>&1 || { echo "rootless docker did not start; see /tmp/dockerd-rootless.log" >&2; exit 1; }
+docker info >/dev/null 2>&1 || { echo "rootless docker did not start; see /tmp/${USER:-$(id -un)}-dockerd-rootless.log" >&2; exit 1; }
 
-KEY=$(grep -m1 -oE 'nvapi-[A-Za-z0-9_-]+' .env)
-CACHE=/raid/docker/tmp/nim-cache-$USER
-mkdir -p "$CACHE" && chmod 777 "$CACHE"
+# /tmp is shared with everyone else on the node, so a fixed log name belongs to
+# whichever teammate started first and every later writer is denied.
+LOGS="/tmp/${USER:-$(id -un)}-warehouse"
+mkdir -p "$LOGS"
+
 mkdir -p deploy/state deploy/openshell/state
 
-NIM_PROFILE=${NIM_PROFILE:-lightning}
-LIGHTNING_IMAGE=${LIGHTNING_IMAGE:-nvcr.io/nim/nvidia/nemotron-3.5-lightning-30b-a3b:latest}
-ULTRA_IMAGE=${ULTRA_IMAGE:-nvcr.io/nim/nvidia/nemotron-3-ultra-550b-a55b:2.0.12}
+env_get(){ grep -m1 -E "^$1=" .env | cut -d= -f2- ; }
+HOSTED_BASE=$(env_get NIM_SUPERVISOR_BASE_URL)
+HOSTED_KEY=$(env_get NIM_SUPERVISOR_API_KEY)
+SUPERVISOR_MODEL=$(env_get NIM_SUPERVISOR_MODEL)
+SPECIALIST_MODEL=${SPECIALIST_MODEL:-nvidia/nvidia/nemotron-3.5-lightning}
+if [ -z "$HOSTED_BASE" ] || [ -z "$HOSTED_KEY" ] || [ -z "$SUPERVISOR_MODEL" ]; then
+  echo "NIM_SUPERVISOR_BASE_URL / _API_KEY / _MODEL must be set in .env" >&2; exit 1
+fi
+
 CUOPT_IMAGE=${CUOPT_IMAGE:-nvcr.io/nvidia/cuopt/cuopt:26.8.0-cu13}
 GUARDRAILS_IMAGE=${GUARDRAILS_IMAGE:-nvcr.io/nvidia/nemo-microservices/guardrails:25.12}
 
-if [ "$NIM_PROFILE" = "ultra" ]; then
-  NIM_IMAGE="$ULTRA_IMAGE"; NIM_GPUS='"device=0,1,2,3"'; NIM_TP=4
-  NIM_MODEL_ID=${NIM_MODEL_ID:-nvidia/nemotron-3-ultra-550b-a55b}
-else
-  NIM_IMAGE="$LIGHTNING_IMAGE"; NIM_GPUS='"device=0"'; NIM_TP=1
-  NIM_MODEL_ID=${NIM_MODEL_ID:-nvidia/nemotron-3.5-lightning-30b-a3b}
-fi
-NIM_PORT=${NIM_PORT:-8000}
-CUOPT_GPUS=${CUOPT_GPUS:-'"device=3"'}
+# GPUs are addressed by UUID rather than by index. The node ships a stale CDI
+# spec that bind-mounts /run/nvidia-persistenced/socket, which no longer
+# exists, so both --gpus and --device nvidia.com/gpu=N fail to create the
+# container; --runtime=nvidia with NVIDIA_VISIBLE_DEVICES takes the legacy path
+# that tolerates the missing socket. UUIDs also remove any doubt about whether
+# an index refers to our allocation or to a GPU held by another job.
+mapfile -t GPU_UUIDS < <(nvidia-smi --query-gpu=uuid --format=csv,noheader 2>/dev/null)
+[ "${#GPU_UUIDS[@]}" -ge 1 ] || { echo "no GPUs visible to this job" >&2; exit 1; }
+CUOPT_GPUS=${CUOPT_GPUS:-${GPU_UUIDS[0]}}
+
+CUOPT_PORT=${CUOPT_PORT:-25000}
+ADAPTER_PORT=${ADAPTER_PORT:-28002}
+GUARDRAILS_PORT=${GUARDRAILS_PORT:-28003}
+OPENSHELL_PORT=${OPENSHELL_PORT:-28004}
+APP_PORT=${APP_PORT:-28090}
+echo "[gpu]   cuopt=${CUOPT_GPUS} (${#GPU_UUIDS[@]} visible)"
+echo "[model] supervisor=${SUPERVISOR_MODEL} specialists=${SPECIALIST_MODEL} @ ${HOSTED_BASE}"
+echo "[port]  cuopt=${CUOPT_PORT} adapter=${ADAPTER_PORT} rails=${GUARDRAILS_PORT} openshell=${OPENSHELL_PORT} ui=${APP_PORT}"
 
 log(){ printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 healthy(){ curl -sf -m 5 -o /dev/null "$1"; }
@@ -74,88 +98,111 @@ wait_http(){ local u=$1 t=$2 n=$3 w=0
   done
   printf ' TIMEOUT after %ss\n' "$t"; return 1; }
 
-cat > deploy/state/stack.env <<ENVEOF
+# Per-user: the checkout is on shared storage and teammates run this too, so a
+# single stack.env would describe whoever started last, not us.
+STATE_FILE="deploy/state/stack.$USER.env"
+cat > "$STATE_FILE" <<ENVEOF
 STACK_NODE=$(hostname)
 STACK_JOB_ID=${SLURM_JOB_ID:-interactive}
 STACK_STARTED=$(date -Is)
-STACK_NIM_PROFILE=${NIM_PROFILE}
-STACK_NIM_MODEL=${NIM_MODEL_ID}
-STACK_NIM_PORT=${NIM_PORT}
+STACK_SUPERVISOR_MODEL=${SUPERVISOR_MODEL}
+STACK_SPECIALIST_MODEL=${SPECIALIST_MODEL}
+STACK_CUOPT_PORT=${CUOPT_PORT}
+STACK_ADAPTER_PORT=${ADAPTER_PORT}
+STACK_GUARDRAILS_PORT=${GUARDRAILS_PORT}
+STACK_OPENSHELL_PORT=${OPENSHELL_PORT}
+STACK_APP_PORT=${APP_PORT}
 ENVEOF
-log "node $(hostname) | job ${SLURM_JOB_ID:-interactive} | nim profile ${NIM_PROFILE} (${NIM_MODEL_ID})"
+log "node $(hostname) | job ${SLURM_JOB_ID:-interactive} | models hosted by NVIDIA"
 
 log "cuOpt solver"
-if ! skip_if_up http://127.0.0.1:5000/cuopt/health "cuOpt"; then
+if ! skip_if_up "http://127.0.0.1:${CUOPT_PORT}/cuopt/health" "cuOpt"; then
   docker rm -f warehouse-cuopt >/dev/null 2>&1
-  eval docker run -d --name warehouse-cuopt --gpus "$CUOPT_GPUS" --shm-size=8g -p 5000:5000 "$CUOPT_IMAGE" >/dev/null
-  wait_http http://127.0.0.1:5000/cuopt/health 300 "cuOpt"
+  docker run -d --name warehouse-cuopt --runtime=nvidia \
+    -e NVIDIA_VISIBLE_DEVICES="$CUOPT_GPUS" -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    --shm-size=8g -p ${CUOPT_PORT}:5000 "$CUOPT_IMAGE" >/dev/null
+  wait_http "http://127.0.0.1:${CUOPT_PORT}/cuopt/health" 300 "cuOpt"
 fi
 
 log "cuOpt slotting adapter"
-if ! skip_if_up http://127.0.0.1:8002/health "adapter"; then
+if ! skip_if_up "http://127.0.0.1:${ADAPTER_PORT}/health" "adapter"; then
   docker build -q -t warehouse-cuopt-adapter ./deploy/cuopt_adapter >/dev/null
   docker rm -f warehouse-cuopt-adapter >/dev/null 2>&1
   docker run -d --name warehouse-cuopt-adapter --network host \
-    -e CUOPT_SERVER_URL=http://127.0.0.1:5000 -e ADAPTER_PORT=8002 warehouse-cuopt-adapter >/dev/null
-  wait_http http://127.0.0.1:8002/health 120 "adapter"
+    -e CUOPT_SERVER_URL="http://127.0.0.1:${CUOPT_PORT}" -e ADAPTER_PORT=${ADAPTER_PORT} \
+    warehouse-cuopt-adapter >/dev/null
+  wait_http "http://127.0.0.1:${ADAPTER_PORT}/health" 120 "adapter"
 fi
 
 log "OpenShell Governor"
-if ! skip_if_up http://127.0.0.1:8004/api/v1/healthz "openshell governor"; then
+if ! skip_if_up "http://127.0.0.1:${OPENSHELL_PORT}/api/v1/healthz" "openshell governor"; then
   pkill -f 'services\.openshell\.governor' >/dev/null 2>&1
-  OPENSHELL_GOVERNOR_PORT=8004 nohup ./.venv/bin/python -m services.openshell.governor > /tmp/governor.log 2>&1 &
-  wait_http http://127.0.0.1:8004/api/v1/healthz 120 "openshell governor"
+  OPENSHELL_GOVERNOR_PORT=${OPENSHELL_PORT} nohup ./.venv/bin/python -m services.openshell.governor > "$LOGS/governor.log" 2>&1 &
+  wait_http "http://127.0.0.1:${OPENSHELL_PORT}/api/v1/healthz" 120 "openshell governor"
 fi
 
-log "${NIM_PROFILE} NIM on port ${NIM_PORT}"
-if ! skip_if_up "http://127.0.0.1:${NIM_PORT}/v1/health/ready" "${NIM_PROFILE} NIM"; then
-  docker rm -f warehouse-nim >/dev/null 2>&1
-  docker rm -f warehouse-nim-supervisor warehouse-nim-subagent >/dev/null 2>&1
-  eval docker run -d --name warehouse-nim --gpus "$NIM_GPUS" --shm-size=32g \
-    -e NGC_API_KEY="$KEY" -e NIM_TENSOR_PARALLEL_SIZE=$NIM_TP \
-    -v "$CACHE:/opt/nim/.cache" -p ${NIM_PORT}:8000 "$NIM_IMAGE" >/dev/null
-  wait_http "http://127.0.0.1:${NIM_PORT}/v1/health/ready" 5400 "${NIM_PROFILE} NIM" || log "NIM still loading; continuing"
-fi
+# The repo sits on team-shared storage and a teammate running this same script
+# rewrites .env for their own ports. Handing the URLs to our processes as real
+# environment variables, with process precedence, stops that from repointing
+# our app at their services.
+export WAREHOUSE_ENV_PRECEDENCE=process
+export CUOPT_URL="http://127.0.0.1:${ADAPTER_PORT}"
+export NEMO_GUARDRAILS_URL="http://127.0.0.1:${GUARDRAILS_PORT}"
+export OPENSHELL_URL="http://127.0.0.1:${OPENSHELL_PORT}"
+export NIM_BASE_URL="$HOSTED_BASE"
+export NIM_MODEL="$SPECIALIST_MODEL"
+export NIM_API_KEY="$HOSTED_KEY"
+export NIM_SUBAGENT_BASE_URL="$HOSTED_BASE"
+export NIM_SUBAGENT_MODEL="$SPECIALIST_MODEL"
 
-# A NIM advertises its own model id, which does not always match the NGC image
-# name (Lightning serves "nvidia/nemotron-3.5-lightning"). Take it from the
-# server so the app and the rails cannot drift out of sync and 404.
-SERVED_MODEL=$(curl -sf -m 10 "http://127.0.0.1:${NIM_PORT}/v1/models" \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null) || SERVED_MODEL=""
-[ -n "$SERVED_MODEL" ] || SERVED_MODEL="$NIM_MODEL_ID"
-log "NIM serves ${SERVED_MODEL}"
-echo "STACK_NIM_SERVED_MODEL=${SERVED_MODEL}" >> deploy/state/stack.env
-python3 - "$SERVED_MODEL" <<'PYEOF'
+# The ports are chosen here, so this script is also what teaches the app where
+# everything landed; otherwise a shared-node port change silently leaves .env
+# pointing at a teammate's services.
+python3 - "$HOSTED_BASE" "$SPECIALIST_MODEL" "$HOSTED_KEY" "$ADAPTER_PORT" "$GUARDRAILS_PORT" "$OPENSHELL_PORT" <<'PYEOF'
 import pathlib, re, sys
-served = sys.argv[1]
+base, specialist, key, adapter, rails, shell = sys.argv[1:7]
+updates = {
+    "NIM_BASE_URL": base,
+    "NIM_MODEL": specialist,
+    "NIM_API_KEY": key,
+    "NIM_SUBAGENT_BASE_URL": base,
+    "NIM_SUBAGENT_MODEL": specialist,
+    "CUOPT_URL": f"http://127.0.0.1:{adapter}",
+    "NEMO_GUARDRAILS_URL": f"http://127.0.0.1:{rails}",
+    "OPENSHELL_URL": f"http://127.0.0.1:{shell}",
+}
 path = pathlib.Path(".env")
 text = path.read_text()
-for key in ("NIM_MODEL", "NIM_SUBAGENT_MODEL"):
-    text = re.sub(rf"(?m)^{key}=.*$", f"{key}={served}", text)
+for name, value in updates.items():
+    line = f"{name}={value}"
+    if re.search(rf"(?m)^{name}=", text):
+        text = re.sub(rf"(?m)^{name}=.*$", line, text)
+    else:
+        text = text.rstrip("\n") + f"\n{line}\n"
 path.write_text(text)
 PYEOF
 
-# Guardrails rails run on the local NIM, so it must be up before the config lands.
+# The rails call a model themselves, so they point at the same hosted endpoint.
 log "NeMo Guardrails"
-if ! skip_if_up http://127.0.0.1:8003/v1/health "guardrails"; then
+if ! skip_if_up "http://127.0.0.1:${GUARDRAILS_PORT}/v1/health" "guardrails"; then
   docker rm -f warehouse-guardrails >/dev/null 2>&1
   docker run -d --name warehouse-guardrails --network host \
-    -e GUARDRAILS_PORT=8003 -e DEFAULT_LLM_PROVIDER=openai \
-    -e NIM_ENDPOINT_URL="http://127.0.0.1:${NIM_PORT}/v1" -e NVIDIA_API_KEY="$KEY" \
-    -e OPENAI_API_KEY="local" -e OPENAI_BASE_URL="http://127.0.0.1:${NIM_PORT}/v1" \
+    -e GUARDRAILS_PORT=${GUARDRAILS_PORT} -e DEFAULT_LLM_PROVIDER=openai \
+    -e NIM_ENDPOINT_URL="$HOSTED_BASE" -e NVIDIA_API_KEY="$HOSTED_KEY" \
+    -e OPENAI_API_KEY="$HOSTED_KEY" -e OPENAI_BASE_URL="$HOSTED_BASE" \
     "$GUARDRAILS_IMAGE" >/dev/null
-  wait_http http://127.0.0.1:8003/v1/health 300 "guardrails"
+  wait_http "http://127.0.0.1:${GUARDRAILS_PORT}/v1/health" 300 "guardrails"
 fi
-# The rails config always gets re-applied so it tracks the model actually served.
-python3 - "$SERVED_MODEL" <<'PYEOF'
+# The rails config always gets re-applied so it tracks the model actually used.
+python3 - "$SPECIALIST_MODEL" <<'PYEOF'
 import json, pathlib, sys
 p = pathlib.Path("deploy/guardrails_warehouse_config.json")
 c = json.loads(p.read_text()); c["data"]["models"][0]["model"] = sys.argv[1]
 p.write_text(json.dumps(c, indent=2))
 PYEOF
-curl -s -X POST http://127.0.0.1:8003/v1/guardrail/configs -H 'Content-Type: application/json' \
+curl -s -X POST "http://127.0.0.1:${GUARDRAILS_PORT}/v1/guardrail/configs" -H 'Content-Type: application/json' \
   -d @deploy/guardrails_warehouse_config.json -o /dev/null -w '  rails config: %{http_code}\n'
-curl -s -X PATCH http://127.0.0.1:8003/v1/guardrail/configs/default/warehouse -H 'Content-Type: application/json' \
+curl -s -X PATCH "http://127.0.0.1:${GUARDRAILS_PORT}/v1/guardrail/configs/default/warehouse" -H 'Content-Type: application/json' \
   -d @deploy/guardrails_warehouse_config.json -o /dev/null -w '  rails patch : %{http_code}\n'
 
 log "UI bundle"
@@ -164,17 +211,19 @@ if ! command -v npm >/dev/null 2>&1; then
   echo "npm not found on PATH (expected \$HOME/opt/node/bin) - cannot build the UI" >&2
   exit 1
 fi
-if [ web/dist/index.html -nt web/src ] && [ web/dist/index.html -nt web/package.json ]; then
+# Comparing against the mtime of web/src only catches edits to the directory
+# itself, so a file copied into web/src/pages left a stale bundle in place.
+if [ -f web/dist/index.html ] && [ -z "$(find web/src web/package.json -newer web/dist/index.html -print -quit 2>/dev/null)" ]; then
   echo "  bundle is current, skipping rebuild"
 else
   ( cd web && { [ -d node_modules ] || npm ci --no-audit --no-fund; } && npm run build ) || exit 1
 fi
 
 log "planner UI"
-if ! skip_if_up "http://127.0.0.1:${APP_PORT:-8090}/api/dashboard" "planner UI"; then
+if ! skip_if_up "http://127.0.0.1:${APP_PORT}/api/dashboard" "planner UI"; then
   pkill -f 'showcase_server\.py' >/dev/null 2>&1
-  nohup ./.venv/bin/python showcase_server.py --host 0.0.0.0 --port "${APP_PORT:-8090}" > /tmp/planner_ui.log 2>&1 &
-  wait_http "http://127.0.0.1:${APP_PORT:-8090}/api/dashboard" 180 "planner UI"
+  nohup ./.venv/bin/python showcase_server.py --host 0.0.0.0 --port "${APP_PORT}" > "$LOGS/planner_ui.log" 2>&1 &
+  wait_http "http://127.0.0.1:${APP_PORT}/api/dashboard" 180 "planner UI"
 fi
 
 log "stack up"

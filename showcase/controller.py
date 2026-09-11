@@ -18,27 +18,21 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from agents.workflow import ProductionWarehouseWorkflow
+from agents.deep_workflow import WarehouseDeepAgent
+from agents.digest import warehouse_digest
 from mocks.enterprise_adapters import SyntheticERPAdapter, SyntheticForecastAdapter, SyntheticWMSAdapter
 from mocks.enterprise_services import MockServiceState, resolve_seed
 from services.config import ProductionConfig
+from services.harness_profile import ANALYSIS_MAX_TOKENS, specialist_model
+from showcase.analysis import analyse_slotting
 from showcase.demand import daily_picks, demand_signal
-from showcase.kpis import detect_problems, warehouse_kpis
+from showcase.kpis import slotting_headroom, warehouse_kpis
 
 ACTOR = "warehouse-planner"
 SITE = "DC-07 / North distribution centre"
 GOAL = (
     "Reduce picker travel over the next seven days. Stay within the move cap, keep cold-chain stock "
     "where it is, and prioritise the highest-demand lines."
-)
-STAGES = (
-    ("ingest", "Read WMS, ERP and forecast"),
-    ("load_policies", "Load operating policies"),
-    ("plan", "Supervisor agent plans"),
-    ("specialists", "Specialist agents analyse"),
-    ("optimize", "cuOpt solves the slotting model"),
-    ("validate", "Guardrails and policy check"),
-    ("create_approval", "Raise approval for review"),
 )
 # write_wms is per_call, so the governor holds the write until an operator answers.
 WRITE_APPROVAL_WAIT_SECONDS = 300
@@ -49,7 +43,7 @@ def _now() -> str:
 
 
 class ShowcaseController:
-    def __init__(self, seed: int | None = None, workflow_factory: Callable[..., Any] = ProductionWarehouseWorkflow):
+    def __init__(self, seed: int | None = None, workflow_factory: Callable[..., Any] = WarehouseDeepAgent):
         self.workflow_factory = workflow_factory
         self.config = ProductionConfig.from_env()
         self.goal = GOAL
@@ -65,6 +59,7 @@ class ShowcaseController:
         self.commit_history = []
         self.commit_state = {"status": "IDLE", "service": "write_wms", "error": None, "commit": None}
         self.baseline_kpis = None
+        self._analysis: Dict[str, Any] = {"key": None, "status": "pending", "error": None, "problems": []}
         self.workflow = self.workflow_factory(
             config=self.config,
             wms=SyntheticWMSAdapter(self.enterprise),
@@ -88,11 +83,51 @@ class ShowcaseController:
             "forecast": self.enterprise.forecast(14),
         }
 
+    def _ensure_analysis(self, source: Mapping[str, Any], kpis: Mapping[str, Any]) -> None:
+        """Interpret the current state once, off the request thread.
+
+        The dashboard is polled continuously; asking a model on every poll would
+        be both slow and wasteful, so the answer is cached against the state it
+        describes and only recomputed when that state changes.
+        """
+        key = (self.seed, len(self.commit_history), json.dumps(self.constraints, sort_keys=True, default=str))
+        if self._analysis.get("key") == key and self._analysis.get("status") != "failed":
+            return
+        if self._analysis.get("inflight") == key:
+            return
+
+        headroom = slotting_headroom(source, self.constraints)
+        zones = [
+            {"zone": z["zone"], "slots": z["slots"], "free": z["free"], "avg_distance_m": z["avg_distance_m"]}
+            for z in warehouse_digest(source, self.constraints).get("zones", [])
+        ]
+        self._analysis = {"key": self._analysis.get("key"), "inflight": key,
+                          "status": "pending", "error": None,
+                          "problems": self._analysis.get("problems", [])}
+
+        def work() -> None:
+            try:
+                problems = analyse_slotting(
+                    specialist_model(self.config, max_tokens=ANALYSIS_MAX_TOKENS),
+                    kpis,
+                    headroom,
+                    self.constraints,
+                    zones,
+                )
+                result = {"key": key, "status": "ready", "error": None, "problems": problems}
+            except Exception as exc:  # noqa: BLE001 - surfaced to the UI, never hidden
+                result = {"key": None, "status": "failed", "error": f"{type(exc).__name__}: {exc}", "problems": []}
+            with self._lock:
+                self._analysis = result
+
+        threading.Thread(target=work, daemon=True).start()
+
     def dashboard(self) -> Dict[str, Any]:
         source = self._source_data()
         kpis = warehouse_kpis(source)
         if self.baseline_kpis is None:
             self.baseline_kpis = dict(kpis)
+        self._ensure_analysis(source, kpis)
         layout = source["wms"]["warehouse_layout"]
         occupancy = source["wms"]["slot_occupancy"]
         occupied: Dict[int, int] = {}
@@ -114,7 +149,12 @@ class ShowcaseController:
             "site": SITE,
             "kpis": kpis,
             "baseline": self.baseline_kpis,
-            "problems": detect_problems(kpis, source, self.constraints),
+            "problems": self._analysis.get("problems", []),
+            "analysis": {
+                "status": self._analysis.get("status", "pending"),
+                "error": self._analysis.get("error"),
+                "model": self.config.nim_subagent_model or self.config.nim_model,
+            },
             "zones": zones,
             "counts": {
                 "skus": len(source["erp"]["sku_master"]["sku_master"]),
@@ -205,113 +245,85 @@ class ShowcaseController:
         return {
             "id": None,
             "status": "IDLE",
-            "stages": [{"key": key, "label": label, "status": "pending", "detail": "", "duration_ms": 0} for key, label in STAGES],
-            "events": [],
-            "agents": [],
+            "orchestrator": {
+                "model": self.config.nim_supervisor_model,
+                "status": "pending",
+                "harness": {"attached": False, "middleware": [], "prompt_suffix_chars": 0},
+                "thinking": [],
+                "narrative": "",
+            },
+            "delegations": [],
+            "rounds": [],
+            "chosen_round": None,
             "guardrails": [],
             "openshell": [],
-            "cuopt": None,
-            "plan": None,
             "moves": [],
+            "summary": None,
             "approval": None,
             "validation": None,
             "error": None,
             "halted_on": None,
             "started_at": None,
             "finished_at": None,
-            "tokens": {"prompt": 0, "completion": 0, "calls": 0},
         }
 
-    def _event(self, message: str, kind: str = "info", stage: str = "") -> None:
-        self.run_state["events"].append({"at": _now(), "kind": kind, "stage": stage, "message": message})
-
-    def _set_stage(self, key: str, status: str, detail: str = "") -> None:
-        for stage in self.run_state["stages"]:
-            if stage["key"] != key:
-                continue
-            if status == "running":
-                stage["_started"] = time.perf_counter()
-            elif "_started" in stage:
-                stage["duration_ms"] = round((time.perf_counter() - stage.pop("_started")) * 1000)
-            stage["status"] = status
-            if detail:
-                stage["detail"] = detail
-            return
+    def _set_orchestrator(self, status: str) -> None:
+        self.run_state["orchestrator"]["status"] = status
 
     def _on_workflow_event(self, kind: str, payload: Mapping[str, Any]) -> None:
         with self._lock:
-            if kind == "stage":
-                node = str(payload.get("node"))
-                message = str(payload.get("message", ""))
-                for stage in self.run_state["stages"]:
-                    if stage["key"] == node and stage["status"] == "pending":
-                        self._set_stage(node, "running", message)
-                    elif stage["key"] != node and stage["status"] == "running":
-                        self._set_stage(stage["key"], "done")
-                self._event(message, "stage", node)
-            elif kind == "specialist_started":
-                agent = str(payload.get("agent"))
-                self.run_state["agents"].append({"name": agent, "role": "specialist", "status": "running", "reasoning": [], "findings": [], "risks": [], "telemetry": {}})
-                self._event(f"{agent} specialist started", "agent", "specialists")
-            elif kind == "specialist_finished":
-                agent = str(payload.get("agent"))
-                analysis = dict(payload.get("analysis") or {})
-                for record in self.run_state["agents"]:
-                    if record["name"] == agent:
+            run = self.run_state
+            if kind == "orchestrator_thinking":
+                text = str(payload.get("reasoning") or payload.get("content") or "").strip()
+                if text:
+                    run["orchestrator"]["thinking"].append(text)
+                self._set_orchestrator("running")
+            elif kind == "state_read":
+                run["measured"] = {"kpis": payload.get("kpis"), "problems": payload.get("problems")}
+            elif kind == "delegation_started":
+                run["delegations"].append({
+                    "id": payload.get("id"),
+                    "name": payload.get("name"),
+                    "question": payload.get("question"),
+                    "answer": "",
+                    "status": "running",
+                })
+            elif kind == "delegation_finished":
+                for record in run["delegations"]:
+                    if record["id"] == payload.get("id"):
+                        record["answer"] = payload.get("answer", "")
+                        record["status"] = "done"
+            elif kind == "solve_started":
+                run["rounds"].append({
+                    "round": payload.get("round"),
+                    "max_moves": payload.get("max_moves"),
+                    "time_limit_s": payload.get("time_limit_s"),
+                    "objective": payload.get("objective"),
+                    "status": "running",
+                })
+            elif kind == "solve_finished":
+                for record in run["rounds"]:
+                    if record["round"] == payload.get("round"):
                         record.update({
                             "status": "done",
-                            "reasoning": self._as_list(analysis.get("reasoning")),
-                            "findings": self._as_list(analysis.get("findings")),
-                            "risks": self._as_list(analysis.get("risks")),
-                            "telemetry": analysis.get("telemetry", {}),
+                            "solver_seconds": payload.get("solver_seconds"),
+                            "kpis_after": payload.get("kpis_after"),
+                            "headroom_after": payload.get("headroom_after"),
                         })
-                self._event(f"{agent} specialist finished", "agent", "specialists")
-            elif kind == "plan_ready":
-                plan = dict(payload.get("plan") or {})
-                self.run_state["plan"] = plan
-                self.run_state["agents"].insert(0, {
-                    "name": "supervisor",
-                    "role": "supervisor",
-                    "status": "done",
-                    "reasoning": self._as_list(plan.get("reasoning")),
-                    "findings": self._as_list(plan.get("objectives")),
-                    "risks": self._as_list(plan.get("binding_constraints")),
-                    "telemetry": plan.get("telemetry", {}),
-                })
-                self._event("Supervisor produced objectives and weights", "agent", "plan")
             elif kind == "guardrail":
-                self.run_state["guardrails"].append({**dict(payload), "at": _now()})
-                verdict = "allowed" if payload.get("allowed") else "blocked"
-                self._event(f"Guardrails {verdict} the {payload.get('stage')} stage", "guardrail", "validate")
+                run["guardrails"].append({**dict(payload), "at": _now()})
             elif kind == "openshell":
-                self.run_state["openshell"].append({**dict(payload), "at": _now()})
-                verdict = "granted" if payload.get("allowed") else "withheld"
-                self._event(f"OpenShell {verdict} {payload.get('service')}", "openshell")
+                run["openshell"].append({**dict(payload), "at": _now()})
             elif kind == "openshell_halt":
-                self.run_state["status"] = "HALTED"
-                self.run_state["halted_on"] = {"service": payload.get("service"), "reason": payload.get("reason")}
-                for stage in self.run_state["stages"]:
-                    if stage["status"] == "running":
-                        stage["status"] = "blocked"
-                        stage["detail"] = str(payload.get("reason", ""))
-                self._event(f"Halted: OpenShell has not granted {payload.get('service')}. {payload.get('reason')}", "openshell")
+                run["status"] = "HALTED"
+                run["halted_on"] = {"service": payload.get("service"), "reason": payload.get("reason")}
+                self._set_orchestrator("waiting-for-approval")
             elif kind == "openshell_resumed":
-                self.run_state["status"] = "RUNNING"
-                self.run_state["halted_on"] = None
-                for stage in self.run_state["stages"]:
-                    if stage["status"] == "blocked":
-                        stage["status"] = "running"
-                self._event(f"Resumed: OpenShell granted {payload.get('service')}", "openshell")
-            elif kind == "cuopt_solved":
-                solution = dict(payload.get("solution") or {})
-                self.run_state["cuopt"] = {
-                    "headline": solution.get("headline"),
-                    "explanation": solution.get("explanation"),
-                    "metrics": solution.get("metrics", {}),
-                    "telemetry": solution.get("telemetry", {}),
-                    "move_count": len(solution.get("moves") or []),
-                }
-                self._event("cuOpt returned an optimal assignment", "solver", "optimize")
+                run["status"] = "RUNNING"
+                run["halted_on"] = None
+                self._set_orchestrator("running")
+            elif kind == "approval_created":
+                run["chosen_round"] = payload.get("round")
 
     @staticmethod
     def _as_list(value: Any) -> List[str]:
@@ -328,13 +340,12 @@ class ShowcaseController:
             self.run_state = self._idle_run()
             self.run_state.update({"id": uuid.uuid4().hex[:12], "status": "RUNNING", "started_at": _now()})
             self.decisions = {}
-            self._event("Run requested by the planner", "info")
         threading.Thread(target=self._execute, daemon=True).start()
         return self.run()
 
     def _execute(self) -> None:
         try:
-            state = self.workflow.run(self.goal, ACTOR, dict(self.constraints))
+            state = self.workflow.run(self.goal, ACTOR, dict(self.constraints), site=SITE)
             with self._lock:
                 self._finish(state)
         except Exception as exc:
@@ -342,34 +353,57 @@ class ShowcaseController:
                 self.run_state["status"] = "FAILED"
                 self.run_state["error"] = f"{type(exc).__name__}: {exc}"
                 self.run_state["finished_at"] = _now()
-                for stage in self.run_state["stages"]:
-                    if stage["status"] == "running":
-                        self._set_stage(stage["key"], "failed", str(exc))
-                self._event(str(exc), "error")
+                self._set_orchestrator("failed")
+                for record in self.run_state["delegations"]:
+                    if record["status"] == "running":
+                        record["status"] = "failed"
+                for record in self.run_state["rounds"]:
+                    if record.get("status") == "running":
+                        record["status"] = "failed"
 
     def _finish(self, state: Mapping[str, Any]) -> None:
-        solution = dict(state.get("solution") or {})
-        raw_moves = solution.get("moves") or solution.get("recommendations") or []
-        source = state.get("source_data", {})
+        chosen = dict(state.get("chosen") or {})
+        solution = dict(chosen.get("solution") or {})
+        raw_moves = list(chosen.get("moves") or [])
+        source = self._source_data()
         sku_by_id = {str(row.get("sku_id")): row for row in source.get("erp", {}).get("sku_master", {}).get("sku_master", [])}
         moves = [self._normalise_move(index, move, sku_by_id) for index, move in enumerate(raw_moves, 1)]
         self.decisions = {move["id"]: "pending" for move in moves}
-        for stage in self.run_state["stages"]:
-            if stage["status"] in ("running", "pending"):
-                self._set_stage(stage["key"], "done")
+        orchestrator = self.run_state["orchestrator"]
+        orchestrator.update({
+            "status": "done",
+            "harness": dict(state.get("harness") or orchestrator["harness"]),
+            "narrative": str(state.get("narrative") or ""),
+            "duration_ms": state.get("duration_ms"),
+        })
+        # The solver detail only exists once the round is complete, so the rounds
+        # recorded live are merged with what the run finally holds.
+        by_round = {r.get("round"): r for r in state.get("rounds") or []}
+        for record in self.run_state["rounds"]:
+            full = by_round.get(record.get("round"))
+            if not full:
+                continue
+            record.update({
+                "moves": len(full.get("moves") or []),
+                "kpis_before": full.get("kpis_before"),
+                "kpis_after": full.get("kpis_after"),
+                "headroom_before": full.get("headroom_before"),
+                "headroom_after": full.get("headroom_after"),
+            })
         self.run_state.update({
             "status": "COMPLETE",
             "finished_at": _now(),
             "moves": moves,
+            "summary": {
+                "headline": solution.get("headline"),
+                "explanation": orchestrator["narrative"] or solution.get("explanation"),
+                "metrics": solution.get("metrics") or {},
+                "move_count": len(moves),
+            },
             "approval": state.get("approval"),
             "validation": state.get("validation"),
-            "tokens": {
-                "prompt": self.workflow.nim.prompt_tokens + self.workflow.subagent_nim.prompt_tokens,
-                "completion": self.workflow.nim.completion_tokens + self.workflow.subagent_nim.completion_tokens,
-                "calls": self.workflow.nim.calls + self.workflow.subagent_nim.calls,
-            },
+            "chosen_round": chosen.get("round"),
         })
-        self._event(f"Plan ready: {len(moves)} moves awaiting review", "info")
 
     @staticmethod
     def _normalise_move(index: int, raw: Mapping[str, Any], sku_by_id: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
@@ -497,17 +531,23 @@ class ShowcaseController:
         }
 
     def telemetry(self) -> Dict[str, Any]:
-        supervisor, subagent = self.workflow.nim, self.workflow.subagent_nim
+        harness = dict(self.run_state.get("orchestrator", {}).get("harness") or {})
         return {
             "models": [
-                {"role": "supervisor", "model": supervisor.model, "endpoint": supervisor.active_endpoint, "calls": supervisor.calls, "prompt_tokens": supervisor.prompt_tokens, "completion_tokens": supervisor.completion_tokens},
-                {"role": "specialists", "model": subagent.model, "endpoint": subagent.active_endpoint, "calls": subagent.calls, "prompt_tokens": subagent.prompt_tokens, "completion_tokens": subagent.completion_tokens},
+                {
+                    "role": "orchestrator",
+                    "model": self.config.nim_supervisor_model,
+                    "endpoint": self.config.nim_supervisor_base_url,
+                    "harness_middleware": len(harness.get("middleware") or []),
+                },
+                {
+                    "role": "specialists",
+                    "model": self.config.nim_subagent_model or self.config.nim_model,
+                    "endpoint": self.config.nim_subagent_base_url or self.config.nim_base_url,
+                    "delegations": len(self.run_state.get("delegations") or []),
+                },
             ],
-            "totals": {
-                "calls": supervisor.calls + subagent.calls,
-                "prompt_tokens": supervisor.prompt_tokens + subagent.prompt_tokens,
-                "completion_tokens": supervisor.completion_tokens + subagent.completion_tokens,
-            },
+            "solve_rounds": len(self.run_state.get("rounds") or []),
             "commits": len(self.commit_history),
         }
 

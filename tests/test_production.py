@@ -9,9 +9,8 @@ from unittest.mock import patch
 from mocks.enterprise_services import MockServiceState
 from services.config import ProductionConfig
 from services.nvidia import PolicyDecision
-from agents.workflow import ProductionWarehouseWorkflow
 from showcase.controller import ShowcaseController
-from showcase.kpis import detect_problems, warehouse_kpis
+from showcase.kpis import slotting_headroom, warehouse_kpis
 from tools.evaluation import AgentCase, AgentEvaluator
 from tools.evaluation_suite import AGENT_NAMES, evaluate_all_agents
 from tools.governance import ApprovalWorkflow, OpenShellPolicy
@@ -82,7 +81,8 @@ class ProductionHarnessTests(unittest.TestCase):
         self.assertGreater(kpis["daily_travel_km"], 0)
         self.assertGreater(kpis["avg_distance_per_pick_m"], 0)
         self.assertLessEqual(kpis["forward_pick_coverage_pct"], 100)
-        self.assertTrue(detect_problems(kpis, source))
+        # Headroom is the measured signal the orchestrator reasons from.
+        self.assertGreater(slotting_headroom(source, {})["headroom_metre_picks"], 0)
 
     def _offline_controller(self, directory: str) -> ShowcaseController:
         """A controller whose workflow cannot reach the live services."""
@@ -104,6 +104,9 @@ class ProductionHarnessTests(unittest.TestCase):
         self.assertEqual(dashboard["counts"]["skus"], 100)
         self.assertGreater(dashboard["kpis"]["daily_travel_km"], 0)
         self.assertEqual(len(dashboard["zones"]), 6)
+        # The interpretation is a model call, so it starts pending rather than
+        # claiming there is nothing wrong.
+        self.assertIn(dashboard["analysis"]["status"], ("pending", "ready", "failed"))
 
     def test_failed_run_reports_the_error_and_produces_no_plan(self):
         with tempfile.TemporaryDirectory() as directory:

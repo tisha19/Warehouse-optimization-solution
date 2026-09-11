@@ -1,5 +1,5 @@
 """Agent orchestration workflows."""
 
-from agents.workflow import ProductionWarehouseWorkflow, WarehouseState
+from agents.deep_workflow import WarehouseDeepAgent
 
-__all__ = ["ProductionWarehouseWorkflow", "WarehouseState"]
+__all__ = ["WarehouseDeepAgent"]

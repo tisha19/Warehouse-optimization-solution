@@ -25,3 +25,6 @@ web/node_modules/
 web/dist/
 web/*.tsbuildinfo
 
+
+# Slurm job logs
+*.log

@@ -39,6 +39,7 @@ export type Dashboard = {
     kpis: Kpis
     baseline: Kpis | null
     problems: Problem[]
+    analysis: { status: 'pending' | 'ready' | 'failed'; error: string | null; model: string }
     zones: Zone[]
     counts: Record<string, number>
     services: Service[]
@@ -120,44 +121,67 @@ export type Move = {
 
 export type RunStatus = 'IDLE' | 'RUNNING' | 'HALTED' | 'COMPLETE' | 'FAILED'
 
-export type Stage = { key: string; label: string; status: string; detail: string; duration_ms: number }
-
-export type Agent = {
-    name: string
-    role: 'supervisor' | 'specialist'
-    status: string
-    reasoning: string[]
-    findings: string[]
-    risks: string[]
-    telemetry: {
-        model?: string
-        endpoint?: string
-        duration_ms?: number
-        prompt_tokens?: number
-        completion_tokens?: number
-    }
+export type Harness = {
+    attached: boolean
+    middleware: string[]
+    prompt_suffix_chars: number
 }
 
-export type RunEvent = { at: string; kind: string; stage: string; message: string }
+export type Orchestrator = {
+    model: string
+    status: 'pending' | 'running' | 'done' | 'failed' | 'waiting-for-approval'
+    harness: Harness
+    thinking: string[]
+    narrative: string
+    duration_ms?: number
+}
 
-export type CuOpt = {
+export type Delegation = {
+    id: string
+    name: string
+    question: string
+    answer: string
+    status: 'running' | 'done' | 'failed'
+}
+
+export type Headroom = {
+    current_metre_picks: number
+    best_metre_picks: number
+    headroom_metre_picks: number
+    headroom_pct: number
+}
+
+export type SolveRound = {
+    round: number
+    status: 'running' | 'done' | 'failed'
+    max_moves: number
+    time_limit_s: number
+    objective: string
+    solver_seconds?: number
+    moves?: number
+    kpis_before?: Kpis
+    kpis_after?: Kpis
+    headroom_before?: Headroom
+    headroom_after?: Headroom
+}
+
+export type SolveSummary = {
     headline: string
     explanation: string
     metrics: Record<string, number>
-    telemetry: { endpoint?: string; duration_ms?: number; candidate_skus?: number; slots?: number }
     move_count: number
 }
 
 export type Run = {
     id: string | null
     status: RunStatus
-    stages: Stage[]
-    events: RunEvent[]
-    agents: Agent[]
+    orchestrator: Orchestrator
+    delegations: Delegation[]
+    rounds: SolveRound[]
+    chosen_round: number | null
+    summary: SolveSummary | null
     guardrails: { stage: string; allowed: boolean; policy_id: string; reason: string; at: string }[]
     openshell: { service: string; actor: string; allowed: boolean; reason: string; at: string }[]
-    cuopt: CuOpt | null
-    plan: Record<string, unknown> | null
     moves: Move[]
     approval: { approval_id?: string; status?: string } | null
     validation: Record<string, unknown> | null
@@ -165,7 +189,6 @@ export type Run = {
     halted_on: { service: string; reason: string } | null
     started_at: string | null
     finished_at: string | null
-    tokens: { prompt: number; completion: number; calls: number }
     decisions: Record<string, 'pending' | 'approved' | 'rejected'>
     constraints: Constraints
     goal: string

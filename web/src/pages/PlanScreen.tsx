@@ -265,11 +265,11 @@ export default function PlanScreen() {
                     <>
                         <div className="pl-head">
                             <div>
-                                <h1 className="pl-head__title">{run?.cuopt?.headline}</h1>
+                                <h1 className="pl-head__title">{run?.summary?.headline}</h1>
                                 <p className="pl-head__sub">
                                     {moves.length} moves · {windows.length} window{windows.length === 1 ? '' : 's'} ·{' '}
                                     {Math.round(totalLabour)} min of labour ·{' '}
-                                    <b>{run?.cuopt?.metrics.travel_reduction_pct}%</b> picker travel reduction
+                                    <b>{run?.summary?.metrics.travel_reduction_pct}%</b> picker travel reduction
                                 </p>
                             </div>
                             <div className="pl-head__right">
@@ -507,7 +507,7 @@ export default function PlanScreen() {
                                     slot capacity, temperature class, and the locked SKU list.
                                 </p>
                                 <div className="pl-obj__terms">
-                                    {Object.entries(run?.cuopt?.metrics ?? {}).map(([key, value]) => (
+                                    {Object.entries(run?.summary?.metrics ?? {}).map(([key, value]) => (
                                         <div className="pl-objterm" key={key}>
                                             <span className="pl-objterm__label">{key.replace(/_/g, ' ')}</span>
                                             <span className="pl-objterm__track">
@@ -527,7 +527,7 @@ export default function PlanScreen() {
                                 </div>
                                 <div className="pl-reason__item">
                                     <span className="pl-reason__label">cuOpt</span>
-                                    <p>{run?.cuopt?.explanation}</p>
+                                    <p>{run?.summary?.explanation}</p>
                                 </div>
                                 {dashboard?.problems
                                     .filter((problem) => !problem.addressable)

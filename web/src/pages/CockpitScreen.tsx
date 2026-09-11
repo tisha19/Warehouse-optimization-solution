@@ -164,9 +164,35 @@ export default function CockpitScreen() {
                     <div className="ck-panel__head">
                         <AlertTriangle size={15} />
                         <span>Slotting vs demand</span>
-                        <span className="ck-panel__dim">{addressable.length ? `${addressable.length} actionable` : 'none outstanding'}</span>
+                        <span className="ck-panel__dim">
+                            {dashboard.analysis.status === 'ready'
+                                ? addressable.length
+                                    ? `${addressable.length} actionable`
+                                    : 'none outstanding'
+                                : dashboard.analysis.status === 'failed'
+                                  ? 'analysis unavailable'
+                                  : 'reading the warehouse…'}
+                        </span>
                     </div>
-                    {addressable.length ? (
+                    {dashboard.analysis.status === 'pending' && (
+                        <div className="ck-note">
+                            <Wrench size={13} />
+                            <div>
+                                <strong>Assessing the layout against demand…</strong>
+                                <p>{dashboard.analysis.model} is judging which gaps a move plan could close.</p>
+                            </div>
+                        </div>
+                    )}
+                    {dashboard.analysis.status === 'failed' && (
+                        <div className="ck-note">
+                            <AlertTriangle size={13} />
+                            <div>
+                                <strong>The analysis could not be produced.</strong>
+                                <p>{dashboard.analysis.error}</p>
+                            </div>
+                        </div>
+                    )}
+                    {dashboard.analysis.status === 'ready' && addressable.length ? (
                         addressable.map((problem) => (
                             <div className={`ck-gap ck-gap--${problem.severity}`} key={problem.id}>
                                 <span className="ck-gap__metric">{problem.metric}</span>
@@ -177,17 +203,19 @@ export default function CockpitScreen() {
                             </div>
                         ))
                     ) : (
-                        <div className="ck-resolved">
-                            <CheckCircle2 size={16} />
-                            <div>
-                                <strong>No slotting problems outstanding.</strong>
-                                <p>
-                                    {lastCommit
-                                        ? `Class A demand is served from the forward pick face at ${dashboard.kpis.forward_pick_coverage_pct}% and the average pick trip is ${dashboard.kpis.avg_distance_per_pick_m}m, after ${dashboard.relocated_total} relocations were committed.`
-                                        : `Class A demand is served from the forward pick face at ${dashboard.kpis.forward_pick_coverage_pct}% and the average pick trip is ${dashboard.kpis.avg_distance_per_pick_m}m.`}
-                                </p>
+                        dashboard.analysis.status === 'ready' && (
+                            <div className="ck-resolved">
+                                <CheckCircle2 size={16} />
+                                <div>
+                                    <strong>No slotting problems outstanding.</strong>
+                                    <p>
+                                        {lastCommit
+                                            ? `Class A demand is served from the forward pick face at ${dashboard.kpis.forward_pick_coverage_pct}% and the average pick trip is ${dashboard.kpis.avg_distance_per_pick_m}m, after ${dashboard.relocated_total} relocations were committed.`
+                                            : `Class A demand is served from the forward pick face at ${dashboard.kpis.forward_pick_coverage_pct}% and the average pick trip is ${dashboard.kpis.avg_distance_per_pick_m}m.`}
+                                    </p>
+                                </div>
                             </div>
-                        </div>
+                        )
                     )}
                     {notes.map((note) => (
                         <div className="ck-note" key={note.id}>
