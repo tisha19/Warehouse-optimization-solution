@@ -60,6 +60,10 @@ export default function WorkflowScreen() {
     const chosen = rounds.find((r) => r.round === run.chosen_round)
     const latestThought = orchestrator.thinking[orchestrator.thinking.length - 1] ?? ''
     const bestBenefit = Math.max(1, ...rounds.map(benefit))
+    // A solver that errored on every attempt says nothing about the layout, so
+    // the two outcomes must not be reported the same way.
+    const failedRounds = rounds.filter((r) => r.status === 'failed')
+    const solverFailed = rounds.length > 0 && failedRounds.length === rounds.length
 
     return (
         <div className="app-body layout-full da">
@@ -141,11 +145,11 @@ export default function WorkflowScreen() {
             </section>
 
             <div className="da__grid">
-                <section className="da__col">
+                <section className="da__row">
                     <h2 className="da__colhead">
                         Delegated to specialists <span className="da__count">{specialists.length}</span>
                     </h2>
-                    <div className="da__cards">
+                    <div className="da__strip">
                         {specialists.length === 0 && <p className="da__empty">Nothing delegated yet.</p>}
                         {specialists.map((item) => (
                             <article className={`da__card is-${item.status}`} key={item.id || `${item.name}-${item.attempt}`}>
@@ -154,7 +158,7 @@ export default function WorkflowScreen() {
                                     <strong>{label(item.name)}</strong>
                                     {item.attempts > 1 && (
                                         <span className="da__attempt">
-                                            re-run {item.attempt}/{item.attempts}
+                                            {item.attempt}/{item.attempts}
                                         </span>
                                     )}
                                     <span className={`da__badge da__badge--${item.status}`}>{item.status}</span>
@@ -166,22 +170,33 @@ export default function WorkflowScreen() {
                     </div>
                 </section>
 
-                <section className="da__col">
+                <section className="da__row">
                     <h2 className="da__colhead">
                         cuOpt solve rounds <span className="da__count">{rounds.length}</span>
+                        {run.status === 'COMPLETE' && chosen && (
+                            <Link className="da__cta" to="/plan">
+                                Review move manifest <ArrowRight size={13} />
+                            </Link>
+                        )}
                     </h2>
-                    <div className="da__cards">
+                    <div className="da__strip">
                         {rounds.length === 0 && <p className="da__empty">The solver has not run yet.</p>}
                         {rounds.map((round) => (
-                            <article className={`da__round is-${roundState(round, run.chosen_round)}`} key={round.round}>
+                            <article
+                                className={`da__round is-${roundState(round, run.chosen_round)}`}
+                                key={`${round.round}-${round.max_moves}`}
+                            >
                                 <header>
                                     <span className="da__rno">R{round.round}</span>
                                     <span className="da__rmeta">
-                                        {round.max_moves} moves · {round.time_limit_s}s budget
-                                        {round.solver_seconds != null && ` · solved in ${round.solver_seconds}s`}
+                                        {round.max_moves} moves · {round.time_limit_s}s
+                                        {round.solver_seconds != null && ` · ${round.solver_seconds}s`}
                                     </span>
-                                    {round.round === run.chosen_round && <span className="da__chosen">recommended</span>}
+                                    {round.round === run.chosen_round && <span className="da__chosen">pick</span>}
                                 </header>
+                                {round.status === 'failed' && (
+                                    <p className="da__rfail">{round.error || 'solver returned no solution'}</p>
+                                )}
                                 {round.headroom_before && (
                                     <div className="da__impact">
                                         <span className="da__bar">
@@ -191,7 +206,7 @@ export default function WorkflowScreen() {
                                             />
                                         </span>
                                         <span className="da__impactpct">
-                                            {Math.round((benefit(round) / bestBenefit) * 100)}% of best gain
+                                            {Math.round((benefit(round) / bestBenefit) * 100)}%
                                         </span>
                                     </div>
                                 )}
@@ -238,16 +253,11 @@ export default function WorkflowScreen() {
                         </span>
                     ))}
                 </div>
-                {run.status === 'COMPLETE' && (
-                    <div className="da__outcome">
-                        {chosen ? (
-                            <>
-                                Round {chosen.round} recommended — {run.moves.length} moves pending approval.{' '}
-                                <Link to="/plan">Review the manifest →</Link>
-                            </>
-                        ) : (
-                            <>No relocation would shorten travel, so the layout is already the best available.</>
-                        )}
+                {run.status === 'COMPLETE' && !chosen && (
+                    <div className={`da__outcome ${solverFailed ? 'is-bad' : ''}`}>
+                        {solverFailed
+                            ? `cuOpt failed on every attempt (${failedRounds.length} of ${rounds.length}), so no move plan was produced. The solver, not the layout, is the blocker.`
+                            : 'No relocation would shorten travel, so the layout is already the best available.'}
                     </div>
                 )}
             </footer>

@@ -14,6 +14,7 @@ the shipped profile under the spec our client actually reports is what turns it 
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, List
 
 from services.config import ProductionConfig
@@ -42,14 +43,25 @@ ANALYSIS_MAX_TOKENS = 32768
 _registered: List[str] = []
 
 # The hosted endpoint occasionally answers a model call with a 503 from its own
-# upstream. deepagents ships a retry for 429s only, so without this a single
-# blip ends a run that is otherwise minutes from finishing.
-_TRANSIENT_MARKERS = ("[502]", "[503]", "[504]", "upstream connect error", "Service Unavailable")
+# upstream, or simply stops responding mid-generation. deepagents ships a retry
+# for 429s only, so without this a single blip ends a run that is otherwise
+# minutes from finishing.
+_TRANSIENT_MARKERS = (
+    "[502]", "[503]", "[504]",
+    "upstream connect error", "Service Unavailable",
+    # A long reasoning turn can outlast the read timeout; that is a stalled
+    # connection, not a rejected request, and the same call usually succeeds.
+    "Read timed out", "ReadTimeout", "ConnectTimeout", "ConnectionError",
+    "Connection aborted", "RemoteDisconnected",
+)
 TRANSIENT_RETRY_DELAYS = (2.0, 6.0, 15.0)
+# A reasoning turn at these token budgets regularly runs past the client's
+# 60s default, which surfaces as a read timeout on a call that was fine.
+REQUEST_TIMEOUT_SECONDS = float(os.getenv("NIM_REQUEST_TIMEOUT_SECONDS", "240"))
 
 
 def _is_transient(error: BaseException) -> bool:
-    text = str(error)
+    text = f"{type(error).__name__}: {error}"
     return any(marker in text for marker in _TRANSIENT_MARKERS)
 
 
@@ -144,6 +156,7 @@ def supervisor_model(config: ProductionConfig | None = None) -> "ChatNVIDIA":
         api_key=config.nim_supervisor_api_key,
         temperature=0.2,
         max_tokens=SUPERVISOR_MAX_TOKENS,
+        timeout=REQUEST_TIMEOUT_SECONDS,
     )
 
 
@@ -166,6 +179,7 @@ def specialist_model(config: ProductionConfig | None = None, max_tokens: int = S
         api_key=key,
         temperature=0.2,
         max_tokens=max_tokens,
+        timeout=REQUEST_TIMEOUT_SECONDS,
     )
 
 

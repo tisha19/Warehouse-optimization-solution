@@ -37,6 +37,8 @@ from tools.governance import ApprovalWorkflow, OpenShellPolicy
 MAX_SOLVER_SECONDS = 60
 # Enough passes to converge, few enough that a stuck loop still terminates.
 MAX_SOLVE_ROUNDS = 6
+# An unhealthy solver fails every call, so retrying it just hangs the run.
+MAX_SOLVER_FAILURES = 2
 AUTHORIZATION_TIMEOUT_SECONDS = 600
 
 SPECIALIST_BRIEFS = {
@@ -216,6 +218,11 @@ class WarehouseDeepAgent:
             rounds = agent._run.setdefault("rounds", [])
             if len(rounds) >= MAX_SOLVE_ROUNDS:
                 return json.dumps({"error": f"solve round limit of {MAX_SOLVE_ROUNDS} reached; finish and create the approval."})
+            if agent._run.get("solver_failures", 0) >= MAX_SOLVER_FAILURES:
+                return json.dumps({
+                    "error": f"the solver failed {MAX_SOLVER_FAILURES} times in a row and is not usable right now",
+                    "advice": "Stop solving and report that no plan could be produced. Do not call this tool again.",
+                })
 
             cap = int(constraints.get("max_moves", 30))
             requested = int(max_moves)
@@ -247,9 +254,14 @@ class WarehouseDeepAgent:
             round_constraints["max_moves"] = moves_allowed
 
             agent._authorize("solve_slotting", actor)
+            # Attempts are numbered, not just successes: a failed solve still has
+            # to be distinguishable in the trace and on screen. Repeats rejected
+            # above never reach here, so they leave no gap in the numbering.
+            attempt = agent._run.get("solve_attempts", 0) + 1
+            agent._run["solve_attempts"] = attempt
             agent._emit(
                 "solve_started",
-                {"round": len(rounds) + 1, "max_moves": moves_allowed, "time_limit_s": budget, "objective": objective},
+                {"round": attempt, "max_moves": moves_allowed, "time_limit_s": budget, "objective": objective},
             )
 
             problem = {
@@ -277,7 +289,15 @@ class WarehouseDeepAgent:
             except ServiceError as error:
                 # Running out of solver budget is a fact the orchestrator can act
                 # on; ending the whole run over it wastes everything before it.
-                agent._emit("solve_failed", {"round": len(rounds) + 1, "time_limit_s": budget, "error": str(error)})
+                failures = agent._run.get("solver_failures", 0) + 1
+                agent._run["solver_failures"] = failures
+                agent._emit("solve_failed", {"round": attempt, "time_limit_s": budget, "error": str(error)})
+                if failures >= MAX_SOLVER_FAILURES:
+                    return json.dumps({
+                        "error": f"the solver has now failed {failures} times in a row",
+                        "detail": str(error)[:300],
+                        "advice": "Stop solving and report that no plan could be produced for these constraints.",
+                    })
                 return json.dumps(
                     {
                         "error": "the solver returned no usable solution",
@@ -291,13 +311,14 @@ class WarehouseDeepAgent:
                     }
                 )
             elapsed = round(time.perf_counter() - started, 1)
+            agent._run["solver_failures"] = 0
 
             moves = list(solution.get("moves") or solution.get("recommendations") or [])
             projected = project_moves(source, moves)
             after = agent._measure(projected, constraints)
 
             record = {
-                "round": len(rounds) + 1,
+                "round": attempt,
                 "requested_max_moves": requested,
                 "max_moves": moves_allowed,
                 "time_limit_s": budget,

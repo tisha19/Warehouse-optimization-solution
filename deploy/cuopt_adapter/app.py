@@ -46,6 +46,13 @@ SLOTS_PER_CANDIDATE = int(os.getenv("CUOPT_SLOTS_PER_CANDIDATE", "3"))
 # this assignment LP, which dual simplex (2) solves reliably.
 CUOPT_METHOD = int(os.getenv("CUOPT_METHOD", "2"))
 CUOPT_TIME_LIMIT = float(os.getenv("CUOPT_TIME_LIMIT_SECONDS", "300"))
+# cuOpt's solver worker dies and drops queued jobs, so one submission is not
+# enough to call the solver genuinely unavailable.
+SOLVE_ATTEMPTS = int(os.getenv("CUOPT_SOLVE_ATTEMPTS", "3"))
+RESUBMIT_DELAY = float(os.getenv("CUOPT_RESUBMIT_DELAY_SECONDS", "2"))
+# This LP solves in under three seconds on a healthy worker, so a job still
+# silent after this long has been dropped rather than being hard.
+LOST_JOB_SECONDS = float(os.getenv("CUOPT_LOST_JOB_SECONDS", "30"))
 # Average picker walking speed, used to convert metres saved into hours saved.
 WALK_SPEED_MPS = float(os.getenv("PICKER_WALK_SPEED_MPS", "1.2"))
 # Fixed pick-and-put allowance per relocation, on top of the walking time.
@@ -207,13 +214,13 @@ def _find_primal(payload: Any) -> Optional[List[float]]:
     return None
 
 
-def _solve_with_cuopt(problem: Dict[str, Any], time_limit: float | None = None) -> List[float]:
-    """cuOpt queues the job and returns a reqId, so the result must be polled."""
-    url = CUOPT_SERVER_URL + CUOPT_SOLVE_PATH
-    budget = CUOPT_TIME_LIMIT if time_limit is None else max(1.0, min(float(time_limit), CUOPT_TIME_LIMIT))
-    body = dict(problem)
-    body["solver_config"] = {"method": CUOPT_METHOD, "time_limit": budget}
-    LOG.info("solving with time_limit=%.0fs", budget)
+def _submit_and_poll(url: str, body: Dict[str, Any], budget: float) -> List[float]:
+    """Submit one job and poll it until the solver answers or the job is lost.
+
+    cuOpt's solver worker sometimes dies mid-job; the server then restarts it
+    but the queued job is gone, and polling keeps returning a bare reqId
+    forever. Give up well before the full budget so the caller can resubmit.
+    """
     try:
         response = httpx.post(url, json=body, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
@@ -223,11 +230,14 @@ def _solve_with_cuopt(problem: Dict[str, Any], time_limit: float | None = None) 
 
     primal = _find_primal(payload)
     req_id = payload.get("reqId") if isinstance(payload, dict) else None
-    # Waiting far past the solver's own budget just turns a slow solve into a
-    # client timeout with nothing to show for it.
-    deadline = time.monotonic() + min(REQUEST_TIMEOUT, budget + 60.0)
+    if primal or not req_id:
+        return primal
 
-    while not primal and req_id and time.monotonic() < deadline:
+    # cuOpt honours its own time_limit, so a job still silent past that limit is
+    # not being worked on at all.
+    grace = min(budget + 10.0, LOST_JOB_SECONDS)
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline:
         time.sleep(POLL_INTERVAL)
         try:
             polled = httpx.get(f"{CUOPT_SERVER_URL}{CUOPT_RESULT_PATH}/{req_id}", timeout=REQUEST_TIMEOUT)
@@ -235,15 +245,67 @@ def _solve_with_cuopt(problem: Dict[str, Any], time_limit: float | None = None) 
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=503, detail=f"cuOpt polling failed: {exc}") from exc
         primal = _find_primal(polled.json())
+        if primal:
+            return primal
+    LOG.warning("cuOpt job %s produced no solution within %.0fs", req_id, grace)
+    return []
 
-    if not primal:
-        raise HTTPException(status_code=503, detail="cuOpt returned no primal solution")
-    return primal
+
+def _solve_with_cuopt(problem: Dict[str, Any], time_limit: float | None = None) -> List[float]:
+    """cuOpt queues the job and returns a reqId, so the result must be polled."""
+    url = CUOPT_SERVER_URL + CUOPT_SOLVE_PATH
+    budget = CUOPT_TIME_LIMIT if time_limit is None else max(1.0, min(float(time_limit), CUOPT_TIME_LIMIT))
+    body = dict(problem)
+    body["solver_config"] = {"method": CUOPT_METHOD, "time_limit": budget}
+
+    for attempt in range(1, SOLVE_ATTEMPTS + 1):
+        LOG.info("solving with time_limit=%.0fs (attempt %d/%d)", budget, attempt, SOLVE_ATTEMPTS)
+        primal = _submit_and_poll(url, body, budget)
+        if primal:
+            return primal
+        if attempt < SOLVE_ATTEMPTS:
+            # The server restarts its worker in about a second, so a fresh
+            # submission usually lands on a live one.
+            LOG.warning("cuOpt dropped the job; resubmitting")
+            time.sleep(RESUBMIT_DELAY)
+
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            f"cuOpt accepted the job but returned no solution after {SOLVE_ATTEMPTS} submissions. "
+            "Its solver worker is restarting repeatedly, so the request never completes."
+        ),
+    )
 
 
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok", "cuopt_server": CUOPT_SERVER_URL, "solve_path": CUOPT_SOLVE_PATH}
+
+
+@app.get("/selftest")
+def selftest() -> Dict[str, Any]:
+    """Prove cuOpt can still solve, not merely that it answers /health.
+
+    cuOpt keeps reporting healthy while its solver worker is dead and silently
+    dropping jobs, so only a real solve distinguishes the two. Two SKUs and two
+    slots is small enough to run as a liveness probe.
+    """
+    problem = _assignment_lp(
+        [{"_picks": 10.0}, {"_picks": 5.0}],
+        [{"distance_to_picking_m": 1.0}, {"distance_to_picking_m": 2.0}],
+    )
+    started = time.monotonic()
+    primal = _submit_and_poll(CUOPT_SERVER_URL + CUOPT_SOLVE_PATH,
+                              {**problem, "solver_config": {"method": CUOPT_METHOD, "time_limit": 5.0}},
+                              5.0)
+    elapsed = round(time.monotonic() - started, 2)
+    if not primal:
+        raise HTTPException(
+            status_code=503,
+            detail=f"cuOpt did not solve a two-variable probe in {elapsed}s; its solver worker is not running",
+        )
+    return {"status": "ok", "seconds": elapsed, "variables": len(primal)}
 
 
 @app.post("/solve/slotting")

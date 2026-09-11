@@ -158,6 +158,7 @@ export type SolveRound = {
     time_limit_s: number
     objective: string
     solver_seconds?: number
+    error?: string
     moves?: number
     kpis_before?: Kpis
     kpis_after?: Kpis

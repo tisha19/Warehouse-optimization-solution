@@ -44,6 +44,7 @@ STATE_FILE="deploy/state/stack.${USER:-$(id -un)}.env"
 [ -f "$STATE_FILE" ] && . "$STATE_FILE"
 OPENSHELL_PORT="${STACK_OPENSHELL_PORT:-28004}"
 APP_PORT="${STACK_APP_PORT:-28090}"
+ADAPTER_PORT="${STACK_ADAPTER_PORT:-28002}"
 LOGS="/tmp/${USER:-$(id -un)}-warehouse"
 mkdir -p "$LOGS"
 
@@ -60,6 +61,12 @@ while true; do
   if [ "$missing" = 1 ]; then
     echo "[stack] containers missing at $(date -Is) - re-running cluster_up.sh"
     ./deploy/cluster_up.sh
+  fi
+  # cuOpt answers /cuopt/health with 200 even when its solver worker has died
+  # and is silently dropping every job, so probe an actual solve instead.
+  if ! curl -sf -m 30 -o /dev/null "http://127.0.0.1:${ADAPTER_PORT}/selftest"; then
+    echo "[stack] cuOpt cannot solve at $(date -Is) - restarting the container"
+    docker restart warehouse-cuopt >/dev/null 2>&1
   fi
   # The Python services must be children of this batch step: anything launched
   # from an "srun --overlap" step is killed when that step exits.
