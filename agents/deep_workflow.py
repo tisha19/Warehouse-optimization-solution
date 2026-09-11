@@ -27,7 +27,7 @@ from agents.digest import warehouse_digest
 from services.config import ProductionConfig
 from services.enterprise import ERPAdapter, ForecastAdapter, WMSAdapter
 from services.harness_profile import profile_report, specialist_model, supervisor_model
-from services.http_client import JsonHttpClient
+from services.http_client import JsonHttpClient, ServiceError
 from services.nvidia import CuOptClient, GuardrailsClient
 from showcase.kpis import project_moves, slotting_headroom, warehouse_kpis
 from tools.governance import ApprovalWorkflow, OpenShellPolicy
@@ -66,8 +66,9 @@ How to work:
 2. Delegate to `demand_specialist`, `inventory_specialist` and `warehouse_specialist`
    for judgement about what those facts mean. Give each a specific question.
 3. Call `solve_slotting` to run the cuOpt solver. You choose `max_moves` (never above
-   the operator's cap of {max_moves}) and `time_limit_s` (at most {max_solver_seconds},
-   around 30 is usually right).
+   the operator's cap of {max_moves}) and `time_limit_s` (at most {max_solver_seconds}).
+   Start at {max_solver_seconds}: a constrained layout often needs the whole budget, and
+   a solve that finds nothing costs more time than one that succeeds.
 4. One solve is rarely the best solve. The result tells you what the moves bought and
    how much addressable headroom is left. The solver is deterministic for a given move
    count, so exploring means varying `max_moves`, not rewording the objective. While
@@ -271,7 +272,24 @@ class WarehouseDeepAgent:
                 },
             }
             started = time.perf_counter()
-            solution = agent.cuopt.solve_slotting(problem)
+            try:
+                solution = agent.cuopt.solve_slotting(problem)
+            except ServiceError as error:
+                # Running out of solver budget is a fact the orchestrator can act
+                # on; ending the whole run over it wastes everything before it.
+                agent._emit("solve_failed", {"round": len(rounds) + 1, "time_limit_s": budget, "error": str(error)})
+                return json.dumps(
+                    {
+                        "error": "the solver returned no usable solution",
+                        "detail": str(error)[:300],
+                        "time_limit_s_used": budget,
+                        "advice": (
+                            f"cuOpt found nothing within {budget:.0f}s. Retry the same move count with a "
+                            f"larger time_limit_s (up to {MAX_SOLVER_SECONDS}); a constrained layout often "
+                            "needs the full budget."
+                        ),
+                    }
+                )
             elapsed = round(time.perf_counter() - started, 1)
 
             moves = list(solution.get("moves") or solution.get("recommendations") or [])
@@ -462,6 +480,13 @@ class WarehouseDeepAgent:
         content = getattr(message, "content", "") or ""
         if not isinstance(content, str):
             content = ""
+
+        usage = getattr(message, "usage_metadata", None)
+        if usage:
+            totals = self._run.setdefault("usage", {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0})
+            totals["calls"] += 1
+            totals["prompt_tokens"] += int(usage.get("input_tokens", 0) or 0)
+            totals["completion_tokens"] += int(usage.get("output_tokens", 0) or 0)
 
         if calls:
             if reasoning or content.strip():

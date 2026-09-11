@@ -64,6 +64,9 @@ class SlottingRequest(BaseModel):
     analysis: Dict[str, Any] = {}
     source_data: Dict[str, Any] = {}
     required_output: Dict[str, Any] = {}
+    # The orchestrator picks this per round and the UI shows what it picked, so
+    # honouring it is what makes that number true.
+    time_limit_s: float | None = None
 
 
 def _daily_picks(sku: Mapping[str, Any], horizon_days: int, forecast_by_sku: Mapping[str, float]) -> float:
@@ -204,11 +207,13 @@ def _find_primal(payload: Any) -> Optional[List[float]]:
     return None
 
 
-def _solve_with_cuopt(problem: Dict[str, Any]) -> List[float]:
+def _solve_with_cuopt(problem: Dict[str, Any], time_limit: float | None = None) -> List[float]:
     """cuOpt queues the job and returns a reqId, so the result must be polled."""
     url = CUOPT_SERVER_URL + CUOPT_SOLVE_PATH
+    budget = CUOPT_TIME_LIMIT if time_limit is None else max(1.0, min(float(time_limit), CUOPT_TIME_LIMIT))
     body = dict(problem)
-    body["solver_config"] = {"method": CUOPT_METHOD, "time_limit": CUOPT_TIME_LIMIT}
+    body["solver_config"] = {"method": CUOPT_METHOD, "time_limit": budget}
+    LOG.info("solving with time_limit=%.0fs", budget)
     try:
         response = httpx.post(url, json=body, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
@@ -218,7 +223,9 @@ def _solve_with_cuopt(problem: Dict[str, Any]) -> List[float]:
 
     primal = _find_primal(payload)
     req_id = payload.get("reqId") if isinstance(payload, dict) else None
-    deadline = time.monotonic() + REQUEST_TIMEOUT
+    # Waiting far past the solver's own budget just turns a slow solve into a
+    # client timeout with nothing to show for it.
+    deadline = time.monotonic() + min(REQUEST_TIMEOUT, budget + 60.0)
 
     while not primal and req_id and time.monotonic() < deadline:
         time.sleep(POLL_INTERVAL)
@@ -248,7 +255,7 @@ def solve_slotting(request: SlottingRequest) -> Dict[str, Any]:
     layout_all = request.source_data.get("wms", {}).get("warehouse_layout", [])
     distance_by_slot = {str(r.get("slot_id")): float(r.get("distance_to_picking_m", 0.0)) for r in layout_all}
 
-    primal = _solve_with_cuopt(_assignment_lp(skus, slots))
+    primal = _solve_with_cuopt(_assignment_lp(skus, slots), request.time_limit_s)
     n_slot = len(slots)
 
     candidates = []

@@ -28,3 +28,6 @@ web/*.tsbuildinfo
 
 # Slurm job logs
 *.log
+
+# Scratch file for multi-line commit messages
+.commitmsg

@@ -221,8 +221,17 @@ export type OpenShell = {
     pending: PendingRequest[]
     audit: AuditEntry[]
     telemetry: {
-        models: { role: string; model: string; endpoint: string; calls: number; prompt_tokens: number; completion_tokens: number }[]
+        models: {
+            role: string
+            model: string
+            endpoint: string
+            calls: number
+            prompt_tokens: number | null
+            completion_tokens: number | null
+            harness_middleware?: number
+        }[]
         totals: { calls: number; prompt_tokens: number; completion_tokens: number }
+        solve_rounds?: number
         commits: number
     }
 }

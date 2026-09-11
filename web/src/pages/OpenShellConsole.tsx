@@ -8,6 +8,11 @@ import './OpenShellConsole.css'
 /* The governance console is deliberately not part of the planner application.
    It is a separate admin surface, on its own palette, over the whole viewport. */
 
+/** Subagent token usage is not observable, so show a dash rather than a false zero. */
+function count(value: number | null | undefined): string {
+    return typeof value === 'number' ? value.toLocaleString() : '—'
+}
+
 const KIND: Record<string, { kind: string; cls: string }> = {
     'llm.supervisor': { kind: 'llm', cls: 'os-kind--llm' },
     'llm.subagent': { kind: 'llm', cls: 'os-kind--llm' },
@@ -249,18 +254,18 @@ export default function OpenShellConsole() {
                                     <td>{model.role}</td>
                                     <td className="os-mono">{model.model}</td>
                                     <td className="os-dim">{model.endpoint}</td>
-                                    <td className="os-cell--right">{model.calls}</td>
-                                    <td className="os-cell--right">{model.prompt_tokens.toLocaleString()}</td>
-                                    <td className="os-cell--right">{model.completion_tokens.toLocaleString()}</td>
+                                    <td className="os-cell--right">{count(model.calls)}</td>
+                                    <td className="os-cell--right">{count(model.prompt_tokens)}</td>
+                                    <td className="os-cell--right">{count(model.completion_tokens)}</td>
                                 </tr>
                             ))}
                             <tr>
                                 <td colSpan={3} className="os-dim">
                                     Totals · {telemetry.commits} approved WMS commits
                                 </td>
-                                <td className="os-cell--right">{telemetry.totals.calls}</td>
-                                <td className="os-cell--right">{telemetry.totals.prompt_tokens.toLocaleString()}</td>
-                                <td className="os-cell--right">{telemetry.totals.completion_tokens.toLocaleString()}</td>
+                                <td className="os-cell--right">{count(telemetry.totals?.calls)}</td>
+                                <td className="os-cell--right">{count(telemetry.totals?.prompt_tokens)}</td>
+                                <td className="os-cell--right">{count(telemetry.totals?.completion_tokens)}</td>
                             </tr>
                         </tbody>
                     </table>

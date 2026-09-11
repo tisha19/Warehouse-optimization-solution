@@ -310,6 +310,10 @@ class ShowcaseController:
                             "kpis_after": payload.get("kpis_after"),
                             "headroom_after": payload.get("headroom_after"),
                         })
+            elif kind == "solve_failed":
+                for record in run["rounds"]:
+                    if record["round"] == payload.get("round"):
+                        record.update({"status": "failed", "error": payload.get("error")})
             elif kind == "guardrail":
                 run["guardrails"].append({**dict(payload), "at": _now()})
             elif kind == "openshell":
@@ -394,6 +398,7 @@ class ShowcaseController:
             "status": "COMPLETE",
             "finished_at": _now(),
             "moves": moves,
+            "usage": dict(state.get("usage") or {}),
             "summary": {
                 "headline": solution.get("headline"),
                 "explanation": orchestrator["narrative"] or solution.get("explanation"),
@@ -532,21 +537,34 @@ class ShowcaseController:
 
     def telemetry(self) -> Dict[str, Any]:
         harness = dict(self.run_state.get("orchestrator", {}).get("harness") or {})
+        usage = dict(self.run_state.get("usage") or {})
+        delegations = len(self.run_state.get("delegations") or [])
         return {
             "models": [
                 {
                     "role": "orchestrator",
                     "model": self.config.nim_supervisor_model,
                     "endpoint": self.config.nim_supervisor_base_url,
+                    "calls": usage.get("calls", 0),
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "completion_tokens": usage.get("completion_tokens", 0),
                     "harness_middleware": len(harness.get("middleware") or []),
                 },
                 {
                     "role": "specialists",
                     "model": self.config.nim_subagent_model or self.config.nim_model,
                     "endpoint": self.config.nim_subagent_base_url or self.config.nim_base_url,
-                    "delegations": len(self.run_state.get("delegations") or []),
+                    "calls": delegations,
+                    # Subagents run isolated, so their usage never reaches this process.
+                    "prompt_tokens": None,
+                    "completion_tokens": None,
                 },
             ],
+            "totals": {
+                "calls": usage.get("calls", 0) + delegations,
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+            },
             "solve_rounds": len(self.run_state.get("rounds") or []),
             "commits": len(self.commit_history),
         }

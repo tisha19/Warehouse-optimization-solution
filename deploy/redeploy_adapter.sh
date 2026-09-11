@@ -13,14 +13,26 @@ fi
 [ -n "${DOCKER_HOST:-}" ] || { echo "rootless docker daemon not found on this node" >&2; exit 1; }
 echo "using DOCKER_HOST=$DOCKER_HOST"
 cd "$HOME/gsh-team07/Warehouse-optimization-solution"
+
+# cluster_up.sh chooses the ports and records them. Hardcoding the defaults here
+# restarts the adapter on a port nothing is talking to, which looks like a
+# healthy container and a dead service.
+STATE_FILE="deploy/state/stack.${USER:-$(id -un)}.env"
+# shellcheck disable=SC1090
+[ -f "$STATE_FILE" ] && . "$STATE_FILE"
+ADAPTER_PORT="${STACK_ADAPTER_PORT:-28002}"
+CUOPT_PORT="${STACK_CUOPT_PORT:-25000}"
+echo "adapter port ${ADAPTER_PORT}, cuOpt on ${CUOPT_PORT}"
+
 docker build -q -t warehouse-cuopt-adapter ./deploy/cuopt_adapter
 docker rm -f warehouse-cuopt-adapter >/dev/null 2>&1 || true
 docker run -d --name warehouse-cuopt-adapter --network host \
-  -e CUOPT_SERVER_URL=http://127.0.0.1:5000 -e ADAPTER_PORT=8002 warehouse-cuopt-adapter >/dev/null
+  -e CUOPT_SERVER_URL="http://127.0.0.1:${CUOPT_PORT}" -e ADAPTER_PORT="${ADAPTER_PORT}" \
+  warehouse-cuopt-adapter >/dev/null
 for _ in $(seq 1 30); do
-  code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8002/health || true)
-  [ "$code" = "200" ] && { echo "adapter health: 200"; exit 0; }
+  code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${ADAPTER_PORT}/health" || true)
+  [ "$code" = "200" ] && { echo "adapter health: 200 on ${ADAPTER_PORT}"; exit 0; }
   sleep 2
 done
-echo "adapter did not become healthy" >&2
+echo "adapter did not become healthy on ${ADAPTER_PORT}" >&2
 exit 1
