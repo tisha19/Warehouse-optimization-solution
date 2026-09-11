@@ -23,6 +23,9 @@ export default function CockpitScreen() {
 
     const addressable = dashboard.problems.filter((p) => p.addressable)
     const notes = dashboard.problems.filter((p) => !p.addressable)
+    // A re-assessment keeps the previous findings on screen, so "nothing yet" and
+    // "nothing to report" have to stay distinguishable.
+    const findings = dashboard.problems.length > 0
     const headline = demand.headline
     const planned = run?.status === 'COMPLETE' ? run.moves : []
     // Once a plan is written the plan itself is gone, so the map falls back to
@@ -165,16 +168,19 @@ export default function CockpitScreen() {
                         <AlertTriangle size={15} />
                         <span>Slotting vs demand</span>
                         <span className="ck-panel__dim">
-                            {dashboard.analysis.status === 'ready'
-                                ? addressable.length
+                            {dashboard.analysis.status === 'failed'
+                                ? 'analysis unavailable'
+                                : dashboard.analysis.status === 'pending'
+                                  ? findings
+                                      ? 're-assessing…'
+                                      : 'reading the warehouse…'
+                                  : addressable.length
                                     ? `${addressable.length} actionable`
-                                    : 'none outstanding'
-                                : dashboard.analysis.status === 'failed'
-                                  ? 'analysis unavailable'
-                                  : 'reading the warehouse…'}
+                                    : 'none outstanding'}
                         </span>
                     </div>
-                    {dashboard.analysis.status === 'pending' && (
+                    {/* Only claim we have nothing to show when we genuinely have nothing. */}
+                    {dashboard.analysis.status === 'pending' && !findings && (
                         <div className="ck-note">
                             <Wrench size={13} />
                             <div>
@@ -192,7 +198,7 @@ export default function CockpitScreen() {
                             </div>
                         </div>
                     )}
-                    {dashboard.analysis.status === 'ready' && addressable.length ? (
+                    {addressable.length ? (
                         addressable.map((problem) => (
                             <div className={`ck-gap ck-gap--${problem.severity}`} key={problem.id}>
                                 <span className="ck-gap__metric">{problem.metric}</span>

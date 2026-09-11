@@ -20,6 +20,11 @@ SYSTEM_PROMPT = """You review a warehouse's slotting against its demand.
 You are given measured facts. Never invent a number: every figure you state must
 appear in the input.
 
+You are writing for a warehouse operations manager, not for an engineer. Use
+plain operational language and never quote the field names from the input:
+say "forward pick coverage is 8.8%", not "forward_pick_coverage_pct is 8.8".
+Say "the 30-move cap", not "max_moves 30".
+
 Report what is wrong and what it costs the operation. Do not prescribe specific
 moves or name slots to relocate between: the optimiser decides that, and a remedy
 that sounds reasonable in prose is often wrong once the constraints are solved.
@@ -37,7 +42,10 @@ Return only JSON:
 {"problems": [{"id": "kebab-case-id", "severity": "high|medium|low",
   "addressable": true|false, "title": "short statement of fact",
   "detail": "one or two sentences naming the numbers behind it",
-  "metric": "the single headline number, e.g. 8.8% or 74.9m"}]}
+  "metric": "one bare figure with its unit and nothing else, e.g. 8.8% or 74.9m"}]}
+
+`metric` must be at most 8 characters. Never put words in it: the units belong
+in `detail`.
 
 Order them most important first. Return at most four. If nothing is worth
 raising, return an empty list."""
@@ -106,12 +114,15 @@ def analyse_slotting(
     for index, item in enumerate(problems[:5], 1):
         if not isinstance(item, dict):
             continue
+        # The model sometimes writes "51.0% forward pick coverage" here; the panel
+        # has room for the figure only, and the words are already in the detail.
+        metric = str(item.get("metric", "")).strip().split()
         cleaned.append({
             "id": str(item.get("id") or f"finding-{index}"),
             "severity": str(item.get("severity", "medium")).lower(),
             "addressable": bool(item.get("addressable")),
             "title": str(item.get("title", "")).strip(),
             "detail": str(item.get("detail", "")).strip(),
-            "metric": str(item.get("metric", "")).strip(),
+            "metric": metric[0] if metric else "",
         })
     return cleaned

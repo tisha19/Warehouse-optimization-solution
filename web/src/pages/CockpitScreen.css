@@ -214,10 +214,18 @@
     border-left-color: var(--border-strong);
     color: var(--text-muted);
 }
+/* The metric is a bare figure, but a wordy one must not squeeze the title into
+   a sliver. Cap the column and let anything longer ellipsise. */
 .ck-gap__metric {
     font-size: 16px;
     font-weight: 600;
     min-width: 52px;
+    max-width: 84px;
+    flex: none;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .ck-gap strong,
 .ck-note strong,
