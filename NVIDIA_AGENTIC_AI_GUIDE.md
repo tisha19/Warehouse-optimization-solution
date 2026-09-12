@@ -382,7 +382,7 @@ warehouse knowledge  demand/inventory/warehouse
 | Distance heuristic | cuOpt constrained optimization |
 | JSON audit trail | Structured traces and audit events |
 | Manual validation | NeMo Guardrails plus Python validators |
-| `agents/workflow.py` | LangGraph production integration scaffold |
+| `agents/deep_workflow.py` | deepagents orchestrator and solve loop |
 | KPI calculator | Harness evaluation and production monitoring |
 | Synthetic generator | NeMo Data Designer or the existing Python generator |
 

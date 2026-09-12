@@ -1,13 +1,18 @@
-# Production agent orchestration
-langchain>=0.3.0
-langgraph>=0.2.0
-langchain-nvidia-ai-endpoints>=0.3.0
+# Agent orchestration. These are the versions verified against the hosted
+# Nemotron endpoint; the Nemotron harness profile that deepagents ships is what
+# the orchestrator depends on, so it cannot go below 0.7.13.
+deepagents>=0.7.13
+langchain>=1.4.0
+langchain-core>=1.6.2
+langgraph>=1.2.11
+langchain-nvidia-ai-endpoints>=1.4.3
 
-# Optional NeMo Guardrails Python runtime
+# Optional NeMo Guardrails Python runtime. The stack reaches the Guardrails
+# microservice over HTTP instead, so this is only needed for local rails.
 nemoguardrails>=0.12.0
 
-# NVIDIA cuOpt is normally deployed as a service/container.
-# Install the version matching your CUDA and cuOpt deployment separately.
+# NVIDIA cuOpt is deployed as a service/container and reached over HTTP.
+# See deploy/cluster_up.sh; nothing is imported from it here.
 
 # Optional observability/evaluation integrations
 # langsmith>=0.1.0

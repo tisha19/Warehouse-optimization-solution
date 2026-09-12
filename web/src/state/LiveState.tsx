@@ -14,6 +14,7 @@ type Live = {
     refreshOpenShell: () => Promise<void>
     startRun: () => Promise<void>
     setConstraints: (patch: Partial<Constraints>) => Promise<void>
+    resetConstraints: () => Promise<void>
     decide: (moveId: string, decision: 'approved' | 'rejected' | 'pending') => Promise<void>
     reset: () => Promise<void>
     clearError: () => void
@@ -85,6 +86,21 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         }
     }, [run, refreshRun, refreshOpenShell])
 
+    // The analysis is produced on a background thread and nothing pushes the
+    // result to the client, so the dashboard is polled rather than waiting for
+    // an action to refresh it. Without this the panel can sit on "re-assessing"
+    // over stale findings until the page is reloaded. The governor is polled
+    // alongside it so the held-call badge is right on every screen, not only
+    // while a run happens to be in flight.
+    useEffect(() => {
+        const waiting = dashboard?.analysis.status === 'pending' || dashboard?.analysis.status === 'held'
+        const poll = window.setInterval(() => {
+            void refreshWarehouse()
+            void refreshOpenShell()
+        }, waiting ? 2500 : 8000)
+        return () => window.clearInterval(poll)
+    }, [dashboard?.analysis.status, refreshWarehouse, refreshOpenShell])
+
     const startRun = useCallback(async () => {
         setBusy(true)
         await guard(async () => setRun(await api.startRun()))
@@ -96,15 +112,25 @@ export function LiveProvider({ children }: { children: ReactNode }) {
             await guard(async () => {
                 await api.setConstraints(patch)
                 setRun(await api.run())
+                // Constraints feed the headroom and the analysis, so the cockpit
+                // is out of date the moment one changes.
+                await refreshWarehouse()
             })
         },
-        [guard],
+        [guard, refreshWarehouse],
     )
 
-    const decide = useCallback(
-        async (moveId: string, decision: 'approved' | 'rejected' | 'pending') => {
-            await guard(async () => setRun(await api.decide(moveId, decision)))
-        },
+    const resetConstraints = useCallback(async () => {
+        await guard(async () => {
+            await api.resetConstraints()
+            setRun(await api.run())
+            await refreshWarehouse()
+        })
+    }, [guard, refreshWarehouse])
+
+    const decide = useCallback(async (moveId: string, decision: 'approved' | 'rejected' | 'pending') => {
+        await guard(async () => setRun(await api.decide(moveId, decision)))
+    },
         [guard],
     )
 
@@ -133,6 +159,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
                 refreshOpenShell,
                 startRun,
                 setConstraints,
+                resetConstraints,
                 decide,
                 reset,
                 clearError: () => setError(null),

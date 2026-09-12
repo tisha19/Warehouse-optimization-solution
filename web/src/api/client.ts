@@ -10,18 +10,24 @@ export type Kpis = {
     lines_below_reorder: number
 }
 
+export type Metric = { value: number; unit: string }
+
+export type Severity = 'severe' | 'warning' | 'notable' | 'info'
+
 export type Problem = {
     id: string
-    severity: 'high' | 'medium' | 'low'
+    severity: Severity
     addressable: boolean
     title: string
     detail: string
-    metric: string
+    metric: Metric | null
 }
 
 export type Zone = { id: string; label: string; slots: number; utilisation: number; distance: number }
 
 export type Service = { name: string; endpoint: string; detail: string }
+
+export type ApprovalScope = 'call' | 'session' | 'always'
 
 export type Commit = {
     at: string
@@ -39,6 +45,12 @@ export type Dashboard = {
     kpis: Kpis
     baseline: Kpis | null
     problems: Problem[]
+    analysis: {
+        status: 'pending' | 'held' | 'ready' | 'failed'
+        error: string | null
+        held_reason: string | null
+        model: string
+    }
     zones: Zone[]
     counts: Record<string, number>
     services: Service[]
@@ -120,44 +132,69 @@ export type Move = {
 
 export type RunStatus = 'IDLE' | 'RUNNING' | 'HALTED' | 'COMPLETE' | 'FAILED'
 
-export type Stage = { key: string; label: string; status: string; detail: string; duration_ms: number }
-
-export type Agent = {
-    name: string
-    role: 'supervisor' | 'specialist'
-    status: string
-    reasoning: string[]
-    findings: string[]
-    risks: string[]
-    telemetry: {
-        model?: string
-        endpoint?: string
-        duration_ms?: number
-        prompt_tokens?: number
-        completion_tokens?: number
-    }
+export type Harness = {
+    attached: boolean
+    middleware: string[]
+    prompt_suffix_chars: number
 }
 
-export type RunEvent = { at: string; kind: string; stage: string; message: string }
+export type Orchestrator = {
+    model: string
+    status: 'pending' | 'running' | 'done' | 'failed' | 'waiting-for-approval'
+    harness: Harness
+    thinking: string[]
+    narrative: string
+    duration_ms?: number
+}
 
-export type CuOpt = {
+export type Delegation = {
+    id: string
+    name: string
+    question: string
+    answer: string
+    status: 'running' | 'done' | 'failed'
+}
+
+export type Headroom = {
+    current_metre_picks: number
+    best_metre_picks: number
+    headroom_metre_picks: number
+    headroom_pct: number
+}
+
+export type SolveRound = {
+    round: number
+    status: 'running' | 'done' | 'failed'
+    max_moves: number
+    time_limit_s: number
+    objective: string
+    solver_seconds?: number
+    error?: string
+    moves?: number
+    kpis_before?: Kpis
+    kpis_after?: Kpis
+    headroom_before?: Headroom
+    headroom_after?: Headroom
+}
+
+export type SolveSummary = {
     headline: string
     explanation: string
     metrics: Record<string, number>
-    telemetry: { endpoint?: string; duration_ms?: number; candidate_skus?: number; slots?: number }
     move_count: number
 }
 
 export type Run = {
     id: string | null
     status: RunStatus
-    stages: Stage[]
-    events: RunEvent[]
-    agents: Agent[]
+    orchestrator: Orchestrator
+    delegations: Delegation[]
+    rounds: SolveRound[]
+    chosen_round: number | null
+    solved_constraints: Constraints | null
+    summary: SolveSummary | null
     guardrails: { stage: string; allowed: boolean; policy_id: string; reason: string; at: string }[]
     openshell: { service: string; actor: string; allowed: boolean; reason: string; at: string }[]
-    cuopt: CuOpt | null
-    plan: Record<string, unknown> | null
     moves: Move[]
     approval: { approval_id?: string; status?: string } | null
     validation: Record<string, unknown> | null
@@ -165,7 +202,6 @@ export type Run = {
     halted_on: { service: string; reason: string } | null
     started_at: string | null
     finished_at: string | null
-    tokens: { prompt: number; completion: number; calls: number }
     decisions: Record<string, 'pending' | 'approved' | 'rejected'>
     constraints: Constraints
     goal: string
@@ -198,8 +234,17 @@ export type OpenShell = {
     pending: PendingRequest[]
     audit: AuditEntry[]
     telemetry: {
-        models: { role: string; model: string; endpoint: string; calls: number; prompt_tokens: number; completion_tokens: number }[]
+        models: {
+            role: string
+            model: string
+            endpoint: string
+            calls: number
+            prompt_tokens: number | null
+            completion_tokens: number | null
+            harness_middleware?: number
+        }[]
         totals: { calls: number; prompt_tokens: number; completion_tokens: number }
+        solve_rounds?: number
         commits: number
     }
 }
@@ -225,12 +270,18 @@ export const api = {
     run: () => call<Run>('/api/run'),
     startRun: () => post<Run>('/api/run/start'),
     setConstraints: (patch: Partial<Constraints>) => post<Constraints>('/api/constraints', patch),
+    resetConstraints: () => post<Constraints>('/api/constraints/reset'),
     decide: (moveId: string, decision: 'approved' | 'rejected' | 'pending') =>
         post<Run>('/api/plan/decide', { move_id: moveId, decision }),
     commit: () => post<CommitState>('/api/plan/commit'),
     commitStatus: () => call<CommitState>('/api/plan/commit'),
     reset: () => post<Dashboard>('/api/reset'),
     openshell: () => call<OpenShell>('/api/openshell'),
-    resolve: (requestId: string, approve: boolean) => post<OpenShell>('/api/openshell/resolve', { request_id: requestId, approve }),
+    resolve: (requestId: string, approve: boolean, scope: ApprovalScope = 'call') =>
+        post<OpenShell>('/api/openshell/resolve', { request_id: requestId, approve, scope }),
+    resolveAll: (approve: boolean, scope: ApprovalScope = 'call') =>
+        post<OpenShell>('/api/openshell/resolve-all', { approve, scope }),
     revoke: (user: string, service: string) => post<OpenShell>('/api/openshell/revoke', { user, service }),
+    revokeAll: () => post<OpenShell>('/api/openshell/revoke-all'),
+    preapprove: (scope: ApprovalScope = 'session') => post<OpenShell>('/api/openshell/preapprove', { scope }),
 }

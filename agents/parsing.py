@@ -50,16 +50,9 @@ def _first_json_object(text: str) -> str | None:
     return None
 
 
-def json_from_response(response: Mapping[str, Any], context: str) -> Dict[str, Any]:
-    """Pull the JSON payload out of a chat completion, or raise ValueError."""
-    choices = response.get("choices") or [{}]
-    message = choices[0].get("message") or {}
-    content = message.get("content")
-    if not content:
-        # Reasoning models return content=None when they run out of completion
-        # budget mid-thought; the reasoning field is the only thing populated.
-        content = message.get("reasoning") or ""
-    answer = _strip_reasoning(str(content)).strip()
+def json_from_text(text: str, context: str) -> Dict[str, Any]:
+    """Pull the JSON payload out of raw model text, or raise ValueError."""
+    answer = _strip_reasoning(str(text or "")).strip()
 
     fenced = _FENCE.search(answer)
     if fenced:
@@ -75,5 +68,20 @@ def json_from_response(response: Mapping[str, Any], context: str) -> Dict[str, A
         if isinstance(parsed, dict):
             return parsed
 
-    finish = choices[0].get("finish_reason")
-    raise ValueError(f"NIM returned a non-JSON {context} (finish_reason={finish})")
+    raise ValueError(f"the model returned a non-JSON {context}")
+
+
+def json_from_response(response: Mapping[str, Any], context: str) -> Dict[str, Any]:
+    """Pull the JSON payload out of a chat completion, or raise ValueError."""
+    choices = response.get("choices") or [{}]
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if not content:
+        # Reasoning models return content=None when they run out of completion
+        # budget mid-thought; the reasoning field is the only thing populated.
+        content = message.get("reasoning") or ""
+    try:
+        return json_from_text(str(content), context)
+    except ValueError:
+        finish = choices[0].get("finish_reason")
+        raise ValueError(f"NIM returned a non-JSON {context} (finish_reason={finish})") from None

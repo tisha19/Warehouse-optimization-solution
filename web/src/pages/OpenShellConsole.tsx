@@ -1,12 +1,17 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Check, ShieldAlert, X } from 'lucide-react'
-import { api, type GovernorService } from '../api/client'
+import { ArrowLeft, Check, ChevronDown, ShieldAlert, ShieldCheck, X } from 'lucide-react'
+import { api, type ApprovalScope, type GovernorService } from '../api/client'
 import { useLive } from '../state/LiveState'
 import './OpenShellConsole.css'
 
 /* The governance console is deliberately not part of the planner application.
    It is a separate admin surface, on its own palette, over the whole viewport. */
+
+/** Subagent token usage is not observable, so show a dash rather than a false zero. */
+function count(value: number | null | undefined): string {
+    return typeof value === 'number' ? value.toLocaleString() : '—'
+}
 
 const KIND: Record<string, { kind: string; cls: string }> = {
     'llm.supervisor': { kind: 'llm', cls: 'os-kind--llm' },
@@ -27,21 +32,75 @@ const modeClass = (approval: string) =>
 
 const serviceName = (service: GovernorService) => service.name ?? service.service ?? ''
 
+function ScopeMenu({ onPick, allLabel = false }: { onPick: (scope: ApprovalScope) => void; allLabel?: boolean }) {
+    const all = allLabel ? ' all' : ''
+    return (
+        <div className="os-scope">
+            <button onClick={() => onPick('call')}>
+                <b>Approve{all} for this call</b>
+                <span>Per-call services hold the next one again</span>
+            </button>
+            <button onClick={() => onPick('session')}>
+                <b>Approve{all} for this dataset</b>
+                <span>Stands until a new warehouse is generated</span>
+            </button>
+            <button onClick={() => onPick('always')}>
+                <b>Approve{all} always</b>
+                <span>Survives a new warehouse; revoke to undo</span>
+            </button>
+        </div>
+    )
+}
+
 export default function OpenShellConsole() {
     const { openshell, refreshOpenShell } = useLive()
+    const [revokingAll, setRevokingAll] = useState(false)
+    const [scopeMenu, setScopeMenu] = useState<string | null>(null)
+    const [bulkBusy, setBulkBusy] = useState(false)
+    const [preBusy, setPreBusy] = useState(false)
 
     useEffect(() => {
         void refreshOpenShell()
     }, [refreshOpenShell])
 
-    const resolve = async (requestId: string, approve: boolean) => {
-        await api.resolve(requestId, approve)
+    const resolve = async (requestId: string, approve: boolean, scope: ApprovalScope = 'call') => {
+        await api.resolve(requestId, approve, scope)
         await refreshOpenShell()
+    }
+
+    const resolveAll = async (approve: boolean, scope: ApprovalScope = 'call') => {
+        setBulkBusy(true)
+        try {
+            await api.resolveAll(approve, scope)
+            await refreshOpenShell()
+        } finally {
+            setBulkBusy(false)
+        }
     }
 
     const revoke = async (user: string, service: string) => {
         await api.revoke(user, service)
         await refreshOpenShell()
+    }
+
+    const preapprove = async (scope: ApprovalScope) => {
+        setPreBusy(true)
+        try {
+            await api.preapprove(scope)
+            await refreshOpenShell()
+        } finally {
+            setPreBusy(false)
+        }
+    }
+
+    const revokeAll = async () => {
+        setRevokingAll(true)
+        try {
+            await api.revokeAll()
+            await refreshOpenShell()
+        } finally {
+            setRevokingAll(false)
+        }
     }
 
     const header = (
@@ -99,14 +158,40 @@ export default function OpenShellConsole() {
 
             <main className="os-main">
                 <section className={`os-card os-approvals${held > 0 ? ' os-approvals--active' : ''}`}>
-                    <div className="os-sec__head">
-                        <h2 className="os-sec__title">
-                            <ShieldAlert size={15} className="os-approvals__ico" /> PENDING APPROVALS
-                        </h2>
-                        <p className="os-sec__desc">
-                            Agent egress calls held by the governor. Approving flips the service on and releases the held call —
-                            the WarehouseIQ run resumes from where it paused.
-                        </p>
+                    <div className="os-sec__head os-sec__head--row">
+                        <div>
+                            <h2 className="os-sec__title">
+                                <ShieldAlert size={15} className="os-approvals__ico" /> PENDING APPROVALS
+                            </h2>
+                            <p className="os-sec__desc">
+                                Agent egress calls held by the governor. Approving flips the service on and releases the held
+                                call — the WarehouseIQ run resumes from where it paused.
+                            </p>
+                        </div>
+                        {held > 1 && (
+                            <div className="os-approve__split os-approve__split--bulk">
+                                <button className="os-approve" disabled={bulkBusy} onClick={() => void resolveAll(true)}>
+                                    <Check size={12} /> {bulkBusy ? 'Approving…' : `Approve all (${held})`}
+                                </button>
+                                <button
+                                    className="os-approve os-approve__more"
+                                    title="Approval scope"
+                                    disabled={bulkBusy}
+                                    onClick={() => setScopeMenu(scopeMenu === 'bulk' ? null : 'bulk')}
+                                >
+                                    <ChevronDown size={12} />
+                                </button>
+                                {scopeMenu === 'bulk' && (
+                                    <ScopeMenu
+                                        onPick={(scope) => {
+                                            setScopeMenu(null)
+                                            void resolveAll(true, scope)
+                                        }}
+                                        allLabel
+                                    />
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {held === 0 ? (
@@ -132,9 +217,29 @@ export default function OpenShellConsole() {
                                             </div>
                                         </div>
                                         <div className="os-approval__actions">
-                                            <button className="os-approve" onClick={() => void resolve(request.id, true)}>
-                                                <Check size={12} /> Approve
-                                            </button>
+                                            <div className="os-approve__split">
+                                                <button
+                                                    className="os-approve"
+                                                    onClick={() => void resolve(request.id, true)}
+                                                >
+                                                    <Check size={12} /> Approve
+                                                </button>
+                                                <button
+                                                    className="os-approve os-approve__more"
+                                                    title="Approval scope"
+                                                    onClick={() => setScopeMenu(scopeMenu === request.id ? null : request.id)}
+                                                >
+                                                    <ChevronDown size={12} />
+                                                </button>
+                                                {scopeMenu === request.id && (
+                                                    <ScopeMenu
+                                                        onPick={(scope) => {
+                                                            setScopeMenu(null)
+                                                            void resolve(request.id, true, scope)
+                                                        }}
+                                                    />
+                                                )}
+                                            </div>
                                             <button className="os-reject" onClick={() => void resolve(request.id, false)}>
                                                 <X size={12} /> Deny
                                             </button>
@@ -147,12 +252,52 @@ export default function OpenShellConsole() {
                 </section>
 
                 <section className="os-card">
-                    <div className="os-sec__head">
-                        <h2 className="os-sec__title">GOVERNED SERVICES</h2>
-                        <p className="os-sec__desc">
-                            Every outbound capability an agent can reach. The approval mode decides whether a call runs freely,
-                            once per user, or is held every single time.
-                        </p>
+                    <div className="os-sec__head os-sec__head--row">
+                        <div>
+                            <h2 className="os-sec__title">GOVERNED SERVICES</h2>
+                            <p className="os-sec__desc">
+                                Every outbound capability an agent can reach. The approval mode decides whether a call runs
+                                freely, once per user, or is held every single time. An agent only asks for the next service
+                                once the last one is allowed, so the queue never holds more than one — grant them ahead of
+                                time and a run finishes without stopping.
+                            </p>
+                        </div>
+                        <div className="os-approve__split os-approve__split--bulk">
+                            <button className="os-grant" disabled={preBusy} onClick={() => void preapprove('session')}>
+                                <ShieldCheck size={12} />
+                                {preBusy ? 'Granting…' : `Grant all ${openshell.services.length} to warehouse-planner`}
+                            </button>
+                            <button
+                                className="os-grant os-grant__more"
+                                title="How long the grant lasts"
+                                disabled={preBusy}
+                                onClick={() => setScopeMenu(scopeMenu === 'pre' ? null : 'pre')}
+                            >
+                                <ChevronDown size={12} />
+                            </button>
+                            {scopeMenu === 'pre' && (
+                                <div className="os-scope">
+                                    <button
+                                        onClick={() => {
+                                            setScopeMenu(null)
+                                            void preapprove('session')
+                                        }}
+                                    >
+                                        <b>Grant for this dataset</b>
+                                        <span>Dropped when a new warehouse is generated</span>
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setScopeMenu(null)
+                                            void preapprove('always')
+                                        }}
+                                    >
+                                        <b>Grant until revoked</b>
+                                        <span>Survives a new warehouse</span>
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     </div>
                     <div className="os-svc-grid">
                         {openshell.services.map((service) => {
@@ -185,6 +330,11 @@ export default function OpenShellConsole() {
                                 Services a user has already cleared. Revoking one puts the next call back in the approval queue.
                             </p>
                         </div>
+                        {openshell.grants.length > 0 && (
+                            <button className="os-revoke os-revoke--all" onClick={() => void revokeAll()} disabled={revokingAll}>
+                                {revokingAll ? 'Revoking…' : `Revoke all (${openshell.grants.length})`}
+                            </button>
+                        )}
                     </div>
                     {openshell.grants.length === 0 ? (
                         <div className="os-empty">No grants have been issued.</div>
@@ -249,18 +399,18 @@ export default function OpenShellConsole() {
                                     <td>{model.role}</td>
                                     <td className="os-mono">{model.model}</td>
                                     <td className="os-dim">{model.endpoint}</td>
-                                    <td className="os-cell--right">{model.calls}</td>
-                                    <td className="os-cell--right">{model.prompt_tokens.toLocaleString()}</td>
-                                    <td className="os-cell--right">{model.completion_tokens.toLocaleString()}</td>
+                                    <td className="os-cell--right">{count(model.calls)}</td>
+                                    <td className="os-cell--right">{count(model.prompt_tokens)}</td>
+                                    <td className="os-cell--right">{count(model.completion_tokens)}</td>
                                 </tr>
                             ))}
                             <tr>
                                 <td colSpan={3} className="os-dim">
                                     Totals · {telemetry.commits} approved WMS commits
                                 </td>
-                                <td className="os-cell--right">{telemetry.totals.calls}</td>
-                                <td className="os-cell--right">{telemetry.totals.prompt_tokens.toLocaleString()}</td>
-                                <td className="os-cell--right">{telemetry.totals.completion_tokens.toLocaleString()}</td>
+                                <td className="os-cell--right">{count(telemetry.totals?.calls)}</td>
+                                <td className="os-cell--right">{count(telemetry.totals?.prompt_tokens)}</td>
+                                <td className="os-cell--right">{count(telemetry.totals?.completion_tokens)}</td>
                             </tr>
                         </tbody>
                     </table>

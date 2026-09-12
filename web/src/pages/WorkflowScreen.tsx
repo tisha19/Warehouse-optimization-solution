@@ -1,18 +1,45 @@
 import { Link } from 'react-router-dom'
-import { Activity, AlertTriangle, ArrowRight, Cpu, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Brain, ShieldCheck, Timer } from 'lucide-react'
 import { useLive } from '../state/LiveState'
+import type { Delegation, SolveRound } from '../api/client'
 import './DeepAgentRun.css'
 
-const STATE_CLASS: Record<string, string> = {
-    pending: 'queued',
-    running: 'running',
-    done: 'ok',
-    blocked: 'held',
-    failed: 'failed',
+const SPECIALIST_LABEL: Record<string, string> = {
+    demand_specialist: 'Demand',
+    inventory_specialist: 'Inventory',
+    warehouse_specialist: 'Warehouse',
+}
+
+function label(name: string): string {
+    return SPECIALIST_LABEL[name] ?? name.replace(/_/g, ' ')
+}
+
+/** Later delegations to the same specialist are re-runs, which the operator should see as such. */
+function withAttempts(delegations: Delegation[]): (Delegation & { attempt: number; attempts: number })[] {
+    const totals = new Map<string, number>()
+    delegations.forEach((d) => totals.set(d.name, (totals.get(d.name) ?? 0) + 1))
+    const seen = new Map<string, number>()
+    return delegations.map((d) => {
+        const attempt = (seen.get(d.name) ?? 0) + 1
+        seen.set(d.name, attempt)
+        return { ...d, attempt, attempts: totals.get(d.name) ?? 1 }
+    })
+}
+
+function roundState(round: SolveRound, chosen: number | null): string {
+    if (round.status === 'running') return 'running'
+    if (round.status === 'failed') return 'failed'
+    return round.round === chosen ? 'chosen' : 'done'
+}
+
+/** Metre-picks a round removes, which is what makes rounds comparable. */
+function benefit(round: SolveRound): number {
+    if (!round.headroom_before || !round.headroom_after) return 0
+    return Math.max(0, round.headroom_before.headroom_metre_picks - round.headroom_after.headroom_metre_picks)
 }
 
 export default function WorkflowScreen() {
-    const { run, openshell, refreshOpenShell } = useLive()
+    const { run, refreshOpenShell } = useLive()
 
     if (!run || run.status === 'IDLE') {
         return (
@@ -25,10 +52,18 @@ export default function WorkflowScreen() {
         )
     }
 
-    const done = run.stages.filter((s) => s.status === 'done').length
-    const elapsed = run.started_at ? ((new Date(run.finished_at ?? Date.now()).getTime() - new Date(run.started_at).getTime()) / 1000).toFixed(1) : '0.0'
-    const agentFor = (key: string) =>
-        key === 'plan' ? run.agents.find((a) => a.role === 'supervisor') : undefined
+    const { orchestrator, delegations, rounds } = run
+    const elapsed = run.started_at
+        ? ((new Date(run.finished_at ?? Date.now()).getTime() - new Date(run.started_at).getTime()) / 1000).toFixed(1)
+        : '0.0'
+    const specialists = withAttempts(delegations)
+    const chosen = rounds.find((r) => r.round === run.chosen_round)
+    const latestThought = orchestrator.thinking[orchestrator.thinking.length - 1] ?? ''
+    const bestBenefit = Math.max(1, ...rounds.map(benefit))
+    // A solver that errored on every attempt says nothing about the layout, so
+    // the two outcomes must not be reported the same way.
+    const failedRounds = rounds.filter((r) => r.status === 'failed')
+    const solverFailed = rounds.length > 0 && failedRounds.length === rounds.length
 
     return (
         <div className="app-body layout-full da">
@@ -40,7 +75,9 @@ export default function WorkflowScreen() {
                 </div>
                 <div className="da__status">
                     <span className={`da__state da__state--${run.status.toLowerCase()}`}>{run.status}</span>
-                    <span className="da__timer">{elapsed}s</span>
+                    <span className="da__timer">
+                        <Timer size={12} /> {elapsed}s
+                    </span>
                     <Link className="da__gov" to="/openshell">
                         <ShieldCheck size={13} /> governed
                     </Link>
@@ -51,7 +88,8 @@ export default function WorkflowScreen() {
                 <div className="da__hold">
                     <AlertTriangle size={15} />
                     <div>
-                        <strong>Process halted.</strong> OpenShell has not granted <code>{run.halted_on.service}</code>. {run.halted_on.reason}
+                        <strong>Waiting for approval.</strong> OpenShell has not granted{' '}
+                        <code>{run.halted_on.service}</code>. {run.halted_on.reason}
                     </div>
                     <Link className="da__holdbtn" to="/openshell" onClick={() => void refreshOpenShell()}>
                         Approve in OpenShell <ArrowRight size={13} />
@@ -69,185 +107,165 @@ export default function WorkflowScreen() {
                 </div>
             )}
 
-            {run.status === 'COMPLETE' && (
-                <div className="da__done">
-                    {run.moves.length > 0 ? (
-                        <>
-                            Trace closed — cuOpt returned a {run.moves.length}-move plan at {run.cuopt?.metrics.travel_reduction_pct}% travel
-                            reduction. <Link to="/plan">Review the move manifest →</Link>
-                        </>
-                    ) : (
-                        <>Trace closed — no relocation would shorten travel, so the layout is already the best available.</>
-                    )}
-                </div>
-            )}
-
-            <div className="da__bar">
-                Streaming spans — orchestrator delegating to intelligence agents and the cuOpt solver
-                <span className="da__progress">
-                    {done}/{run.stages.length}
-                </span>
-                complete
-            </div>
-
-            <div className="da__body">
-                <div className="da__spans">
-                    <div className="da__spanhead">
-                        <span>span</span>
-                        <span>dur</span>
-                        <span>state</span>
+            <section className={`da__orch is-${orchestrator.status}`}>
+                <div className="da__orchhead">
+                    <div className="da__orchid">
+                        <span className="da__orchmark">
+                            <Brain size={17} />
+                        </span>
+                        <div>
+                            <strong>Orchestrator</strong>
+                            <span>{orchestrator.model}</span>
+                        </div>
                     </div>
-                    {run.stages.map((stage) => {
-                        const agent = agentFor(stage.key)
-                        const specialists = stage.key === 'specialists' ? run.agents.filter((a) => a.role === 'specialist') : []
-                        return (
-                            <div className={`da__span is-${STATE_CLASS[stage.status] ?? 'queued'}`} key={stage.key}>
-                                <div className="da__spanrow">
-                                    <div className="da__spanid">
-                                        <Cpu size={14} />
-                                        <div>
-                                            <strong>{stage.key}</strong>
-                                            <span>{stage.label}</span>
-                                        </div>
-                                    </div>
-                                    <span className="da__dur">{stage.duration_ms ? `${(stage.duration_ms / 1000).toFixed(2)}s` : '—'}</span>
-                                    <span className={`da__badge da__badge--${STATE_CLASS[stage.status] ?? 'queued'}`}>{stage.status}</span>
-                                </div>
-                                {stage.detail && <div className="da__spandetail">{stage.detail}</div>}
-                                {agent?.reasoning.map((line, index) => (
-                                    <div className="da__line" key={index}>
-                                        <span className="da__lineno">{index + 1}</span>
-                                        {line}
-                                    </div>
-                                ))}
-                                {specialists.map((specialist) => (
-                                    <div className="da__sub" key={specialist.name}>
-                                        <div className="da__subhead">
-                                            <strong>{specialist.name}</strong>
-                                            <span>
-                                                {specialist.telemetry.duration_ms}ms · {specialist.telemetry.completion_tokens} out /{' '}
-                                                {specialist.telemetry.prompt_tokens} in tokens
-                                            </span>
-                                        </div>
-                                        {specialist.reasoning.map((line, index) => (
-                                            <div className="da__line" key={index}>
-                                                <span className="da__lineno">{index + 1}</span>
-                                                {line}
-                                            </div>
-                                        ))}
-                                        {specialist.findings.length > 0 && (
-                                            <div className="da__chips">
-                                                {specialist.findings.map((finding) => (
-                                                    <span key={finding}>{finding}</span>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        )
-                    })}
+                    <div className="da__orchmeta">
+                        {orchestrator.harness.attached && (
+                            <span className="da__harness">
+                                Nemotron harness · <b>{orchestrator.harness.middleware.length}</b> middleware ·{' '}
+                                <b>{orchestrator.harness.prompt_suffix_chars}</b> char profile
+                            </span>
+                        )}
+                        <span className={`da__badge da__badge--${orchestrator.status}`}>{orchestrator.status}</span>
+                    </div>
                 </div>
 
-                <aside className="da__rail">
-                    <section className="da__card">
-                        <div className="da__cardhead">
-                            <Activity size={14} /> run objective
-                        </div>
-                        <p>{run.goal}</p>
-                        <div className="da__kv">
-                            <span>max moves</span>
-                            <b>{run.constraints.max_moves}</b>
-                        </div>
-                        <div className="da__kv">
-                            <span>labour per window</span>
-                            <b>{Math.round(run.constraints.labour_minutes_per_window / 60)} h</b>
-                        </div>
-                        <div className="da__kv">
-                            <span>cold-chain locked</span>
-                            <b>{run.constraints.cold_chain_locked ? 'on' : 'off'}</b>
-                        </div>
-                        <div className="da__kv">
-                            <span>locked SKUs</span>
-                            <b>{run.constraints.locked_skus.length || '—'}</b>
-                        </div>
-                    </section>
-
-                    <section className="da__card">
-                        <div className="da__cardhead">
-                            <Cpu size={14} /> telemetry
-                        </div>
-                        <div className="da__kv">
-                            <span>tokens in</span>
-                            <b>{run.tokens.prompt || '—'}</b>
-                        </div>
-                        <div className="da__kv">
-                            <span>tokens out</span>
-                            <b>{run.tokens.completion || '—'}</b>
-                        </div>
-                        <div className="da__kv">
-                            <span>model calls</span>
-                            <b>{run.tokens.calls}</b>
-                        </div>
-                        {run.cuopt && (
-                            <>
-                                <div className="da__kv">
-                                    <span>cuOpt solve</span>
-                                    <b>{run.cuopt.telemetry.duration_ms}ms</b>
-                                </div>
-                                <div className="da__kv">
-                                    <span>model size</span>
-                                    <b>
-                                        {run.cuopt.telemetry.candidate_skus} SKUs · {run.cuopt.telemetry.slots} slots
-                                    </b>
-                                </div>
-                            </>
-                        )}
-                        {run.agents[0]?.telemetry.model && (
-                            <div className="da__kv da__kv--wrap">
-                                <span>serving</span>
-                                <b>{run.agents[0].telemetry.model}</b>
-                            </div>
-                        )}
-                    </section>
-
-                    <section className="da__card">
-                        <div className="da__cardhead">
-                            <ShieldCheck size={14} /> policy
-                        </div>
-                        {run.guardrails.length === 0 && run.openshell.length === 0 && <p className="da__dim">No policy decision yet.</p>}
-                        {run.guardrails.map((event, index) => (
-                            <div className="da__policy" key={`g${index}`}>
-                                <span className={`da__pill da__pill--${event.allowed ? 'ok' : 'bad'}`}>{event.allowed ? 'allowed' : 'blocked'}</span>
-                                guardrails · {event.stage} rail
-                            </div>
+                {orchestrator.harness.attached && (
+                    <ul className="da__mw">
+                        {orchestrator.harness.middleware.map((name) => (
+                            <li key={name}>{name.replace(/Middleware$/, '')}</li>
                         ))}
-                        {run.openshell.map((event, index) => (
-                            <div className="da__policy" key={`o${index}`}>
-                                <span className={`da__pill da__pill--${event.allowed ? 'ok' : 'bad'}`}>{event.allowed ? 'granted' : 'held'}</span>
-                                <code>{event.service}</code>
-                            </div>
+                    </ul>
+                )}
+
+                {orchestrator.status === 'running' && latestThought && (
+                    <p className="da__thought">{latestThought}</p>
+                )}
+
+                {orchestrator.narrative && <div className="da__narrative">{orchestrator.narrative}</div>}
+            </section>
+
+            <div className="da__grid">
+                <section className="da__row">
+                    <h2 className="da__colhead">
+                        Delegated to specialists <span className="da__count">{specialists.length}</span>
+                    </h2>
+                    <div className="da__strip">
+                        {specialists.length === 0 && <p className="da__empty">Nothing delegated yet.</p>}
+                        {specialists.map((item) => (
+                            <article className={`da__card is-${item.status}`} key={item.id || `${item.name}-${item.attempt}`}>
+                                <header>
+                                    <span className="da__avatar">{label(item.name).charAt(0)}</span>
+                                    <strong>{label(item.name)}</strong>
+                                    {item.attempts > 1 && (
+                                        <span className="da__attempt">
+                                            {item.attempt}/{item.attempts}
+                                        </span>
+                                    )}
+                                    <span className={`da__badge da__badge--${item.status}`}>{item.status}</span>
+                                </header>
+                                <p className="da__question">{item.question}</p>
+                                {item.answer && <p className="da__answer">{item.answer}</p>}
+                            </article>
                         ))}
-                        {openshell && openshell.pending.length > 0 && (
-                            <Link className="da__holdbtn da__holdbtn--sm" to="/openshell">
-                                {openshell.pending.length} awaiting approval
-                            </Link>
-                        )}
-                    </section>
-                </aside>
+                    </div>
+                </section>
+
+                <section className="da__row">
+                    <h2 className="da__colhead">
+                        cuOpt solve rounds <span className="da__count">{rounds.length}</span>
+                        {run.status === 'COMPLETE' &&
+                            (chosen ? (
+                                <Link className="da__cta" to="/plan">
+                                    Review move manifest <ArrowRight size={13} />
+                                </Link>
+                            ) : (
+                                <Link className="da__cta da__cta--quiet" to="/cockpit">
+                                    Back to cockpit <ArrowRight size={13} />
+                                </Link>
+                            ))}
+                    </h2>
+                    <div className="da__strip">
+                        {rounds.length === 0 && <p className="da__empty">The solver has not run yet.</p>}
+                        {rounds.map((round) => (
+                            <article
+                                className={`da__round is-${roundState(round, run.chosen_round)}`}
+                                key={`${round.round}-${round.max_moves}`}
+                            >
+                                <header>
+                                    <span className="da__rno">R{round.round}</span>
+                                    <span className="da__rmeta">
+                                        {round.max_moves} moves · {round.time_limit_s}s
+                                        {round.solver_seconds != null && ` · ${round.solver_seconds}s`}
+                                    </span>
+                                    {round.round === run.chosen_round && <span className="da__chosen">pick</span>}
+                                </header>
+                                {round.status === 'failed' && (
+                                    <p className="da__rfail">{round.error || 'solver returned no solution'}</p>
+                                )}
+                                {round.headroom_before && (
+                                    <div className="da__impact">
+                                        <span className="da__bar">
+                                            <span
+                                                className="da__barfill"
+                                                style={{ width: `${Math.round((benefit(round) / bestBenefit) * 100)}%` }}
+                                            />
+                                        </span>
+                                        <span className="da__impactpct">
+                                            {Math.round((benefit(round) / bestBenefit) * 100)}%
+                                        </span>
+                                    </div>
+                                )}
+                                {round.kpis_after && round.kpis_before && (
+                                    <dl className="da__delta">
+                                        <div>
+                                            <dt>travel / pick</dt>
+                                            <dd>
+                                                {round.kpis_before.avg_distance_per_pick_m}m →{' '}
+                                                <b className="da__up">{round.kpis_after.avg_distance_per_pick_m}m</b>
+                                            </dd>
+                                        </div>
+                                        <div>
+                                            <dt>forward pick</dt>
+                                            <dd>
+                                                {round.kpis_before.forward_pick_coverage_pct}% →{' '}
+                                                <b className="da__up">{round.kpis_after.forward_pick_coverage_pct}%</b>
+                                            </dd>
+                                        </div>
+                                        <div>
+                                            <dt>daily travel</dt>
+                                            <dd>
+                                                <b>{Math.round(round.kpis_after.daily_travel_km)}</b> km
+                                            </dd>
+                                        </div>
+                                    </dl>
+                                )}
+                            </article>
+                        ))}
+                    </div>
+                </section>
             </div>
 
-            <div className="da__log">
-                {run.events
-                    .slice()
-                    .reverse()
-                    .map((event, index) => (
-                        <div className={`da__logline da__logline--${event.kind}`} key={index}>
-                            <time>{new Date(event.at).toLocaleTimeString()}</time>
-                            <span>{event.message}</span>
-                        </div>
+            <footer className="da__foot">
+                <div className="da__policies">
+                    {run.guardrails.map((item, index) => (
+                        <span key={`g-${index}`} className={`da__pill ${item.allowed ? 'is-ok' : 'is-bad'}`}>
+                            rails · {item.stage} {item.allowed ? 'passed' : 'blocked'}
+                        </span>
                     ))}
-            </div>
+                    {run.openshell.map((item, index) => (
+                        <span key={`o-${index}`} className={`da__pill ${item.allowed ? 'is-ok' : 'is-bad'}`}>
+                            openshell · {item.service} {item.allowed ? 'granted' : 'held'}
+                        </span>
+                    ))}
+                </div>
+                {run.status === 'COMPLETE' && !chosen && (
+                    <div className={`da__outcome ${solverFailed ? 'is-bad' : ''}`}>
+                        {solverFailed
+                            ? `cuOpt failed on every attempt (${failedRounds.length} of ${rounds.length}), so no move plan was produced. The solver, not the layout, is the blocker.`
+                            : 'No relocation would shorten travel, so the layout is already the best available.'}
+                    </div>
+                )}
+            </footer>
         </div>
     )
 }

@@ -1,141 +1,171 @@
-# Self-hosted stack on Curiosity v2
+# WarehouseIQ on Curiosity v2
 
-Runs the warehouse planner with NVIDIA cuOpt, NeMo Guardrails, OpenShell and two
-Nemotron NIMs self-hosted on one DGX-B300 node.
+WarehouseIQ runs as two halves:
 
-## Why a batch job, not `srun`
+- **Models — hosted by NVIDIA.** Nemotron 3 Ultra orchestrates and Nemotron 3.5
+  Lightning runs the specialists, both at `https://inference-api.nvidia.com/v1`.
+  Nothing to start, nothing to load, no GPU.
+- **Services — ours, on a DGX-B300 node.** cuOpt, the cuOpt slotting adapter,
+  NeMo Guardrails, the OpenShell governor and the WarehouseIQ UI/API.
 
-An interactive `srun --pty` session dies with your SSH connection and takes every
-container with it (we lost job 5221 that way). The stack therefore runs under
-**`sbatch`**, which keeps the allocation and the containers alive after you log out.
+Only cuOpt needs a GPU, so the whole stack fits in **one** of the team's four.
 
-## Quick start
+## Start everything
 
 ```bash
 cd ~/gsh-team07/Warehouse-optimization-solution
-sbatch deploy/slurm_stack.sbatch     # start everything
-./deploy/stack_status.sh             # where it runs + per-service health
-./deploy/stack_down.sh               # stop and release the GPUs
+./deploy/runall.sh
 ```
 
-`stack_status.sh` is safe to run from the login node and prints the node the stack
-landed on, taken from `deploy/state/stack.env`.
+`runall.sh` is the only command you normally need. It checks the hosted
+endpoint, reports what is already up, submits the stack job if it is missing,
+follows the boot log until every service answers its health check, then prints
+the final status and how to reach it. It is safe to re-run: a healthy stack is
+left alone rather than restarted.
 
-### The UI is a build artefact
-
-The operator UI is a React + Vite app in `web/`, and `web/dist` is **not** committed.
-`cluster_up.sh` builds it automatically using the rootless Node install at
-`$HOME/opt/node/bin` (node 20 / npm 10). If that directory is missing, the stack
-refuses to start rather than serving a stale bundle. To rebuild by hand:
+Arguments are passed through to `sbatch`, so to reuse a warm image cache:
 
 ```bash
-export PATH="$HOME/opt/node/bin:$PATH"
-cd web && npm ci && npm run build
+./deploy/runall.sh --nodelist=dgx02
 ```
 
-### Rebuilding the cuOpt adapter
+A cold start takes about 80 seconds once the images are cached.
 
-The adapter runs as a rootless-docker container on the compute node, and neither
-`docker` nor the Slurm binaries are on the default non-interactive `PATH`:
+## Reach the services from your laptop
 
 ```bash
-export PATH=/cm/local/apps/slurm/current/bin:$PATH
-export SLURM_CONF=/cm/shared/apps/slurm/etc/slurm/slurm.conf
-srun --jobid=<JOBID> --overlap bash deploy/redeploy_adapter.sh
+./deploy/forwardallports.sh <your-access-key>
 ```
 
-`redeploy_adapter.sh` discovers `DOCKER_HOST` from the running rootless daemon.
+Run this **on your own machine**, not on the cluster — SSH port forwarding is
+set up by the client, so every team member runs it themselves with their own
+access key. Leave it running; Ctrl-C closes the tunnels.
 
-## Restarting / resuming
+It reads the stack owner's state file to discover which node the stack landed on
+and which ports it bound, then forwards all of them in a single SSH session:
 
-| Situation | What to do |
+| Service | Local URL |
 |---|---|
-| Job still `RUNNING`, one service died | `./deploy/stack_status.sh` to confirm, then on the node: `./deploy/cluster_up.sh` (idempotent, replaces containers) |
-| Job ended or was cancelled | `sbatch deploy/slurm_stack.sbatch` |
-| You lost your SSH session | Nothing to do — the batch job keeps running. Reconnect and run `./deploy/stack_status.sh` |
-| Time limit approaching | `sbatch` a new job before the old one expires, then `./deploy/stack_down.sh` for the old one |
-| Wrong node / GPUs busy | `./deploy/stack_down.sh`, then resubmit; Slurm picks any idle node |
+| WarehouseIQ UI | <http://127.0.0.1:28090> |
+| cuOpt solver | <http://127.0.0.1:25000> |
+| cuOpt adapter | <http://127.0.0.1:28002> |
+| NeMo Guardrails | <http://127.0.0.1:28003> |
+| OpenShell governor | <http://127.0.0.1:28004> |
 
-Attach to the running job's node for hands-on work:
+Options:
 
-```bash
-srun --jobid=$(squeue -u $USER -h -n warehouse-stack -o %i) --pty bash -l
-module load rootless-docker/1.75
-docker ps
-docker logs -f warehouse-nim-supervisor
-```
+| Flag | Why |
+|---|---|
+| `--owner <user>` | Forward someone else's stack. Defaults to the shared one. |
+| `--offset <n>` | Shift every local port by `n` when something on your machine already holds one. Remote ports are unchanged. |
+| `--print` | Show the ssh command and the URL table, then exit. |
+
+Works with any OpenSSH client: macOS, Linux, WSL, or Git Bash on Windows.
 
 ## Ports
 
-| Service | Port | Health check |
+Defaults are a private **28xxx** block rather than the obvious 8000/8002/8004.
+Several of us share a node and run this same stack, and the obvious ports are
+already taken. Worse than failing to bind, `cluster_up.sh`'s `skip_if_up` check
+would see a teammate's healthy service, skip starting ours, and silently wire
+our app to their containers. Override any of `CUOPT_PORT`, `ADAPTER_PORT`,
+`GUARDRAILS_PORT`, `OPENSHELL_PORT`, `APP_PORT` if you need to move.
+
+## Sharing the cluster
+
+The checkout lives on team-shared storage and several of us run these scripts,
+so anything with a fixed name is contended. What is already handled:
+
+- **State** is per-user: `deploy/state/stack.$USER.env`.
+- **Logs** are per-user: `/tmp/$USER-warehouse/`. A fixed `/tmp/governor.log`
+  belongs to whoever started first and denies everyone else.
+- **`.env`** is shared and gets rewritten by whoever runs `cluster_up.sh` last,
+  so the script also exports the URLs into the environment of the processes it
+  starts, with `WAREHOUSE_ENV_PRECEDENCE=process`. Process env beats `.env`.
+
+Before assuming the GPU quota is the problem, check who is holding what:
+
+```bash
+squeue -q gsh-team07 -O JobID:8,UserName:12,Name:18,State:10,NodeList:10,tres-per-node:12
+```
+
+## Scripts
+
+| Script | Run from | What it does |
 |---|---|---|
-| cuOpt solver | 5000 | `/cuopt/health` |
-| cuOpt slotting adapter | 8002 | `/health` |
-| NeMo Guardrails | 8003 | `/v1/health` |
-| OpenShell Governor | 8004 | `/api/v1/healthz` |
-| Nemotron 3 Ultra (supervisor) | 8000 | `/v1/health/ready` |
-| Nemotron 3.5 Lightning (sub-agent) | 8010 | `/v1/health/ready` |
-| WarehouseIQ UI | 8090 | `/api/dashboard` |
+| `runall.sh` | login node | Status → start what is missing → follow logs → final status → URL. The normal entry point. |
+| `forwardallports.sh` | **your laptop** | Forwards every service to localhost in one SSH session. |
+| `slurm_stack.sbatch` | `sbatch` | Holds the allocation and re-runs `cluster_up.sh` if containers vanish. Requests 1 GPU for 30 days. |
+| `cluster_up.sh` | compute node | Brings the stack up idempotently: rootless docker, images, containers, web bundle, Guardrails config. Called by the sbatch job; safe to re-run. `FORCE=1` recreates everything. |
+| `stack_status.sh` | login node | Per-service health plus the Slurm queue. Read-only, never starts anything. |
+| `stack_verify.sh` | login node | End-to-end check: drives a run through the governor and the approval path. |
+| `stack_down.sh` | login node | Cancels the stack job and releases the GPU. |
+| `redeploy_adapter.sh` | `srun --overlap` | Rebuilds and restarts the cuOpt adapter after a code change. |
+| `hosted_ultra_test.py` | anywhere with `.env` | Four checks against a hosted model — model list, completion, tool calling, streamed reasoning. Takes an optional model id. |
+| `hosted_models.py` | anywhere with `.env` | Lists the hosted catalogue, optionally filtered by substring. |
+| `show_env.py` / `set_env.py` | anywhere | Read `.env` with secrets masked / upsert a key read from stdin, so secrets never reach the command line or the shell history. |
+| `check_versions.sh` | login node | Compares installed agent-stack versions against the latest on PyPI. |
+| `fix_line_endings.py` | anywhere | Normalises CRLF **and bare CR** after any `scp` from Windows. A stray `\r` on a heredoc terminator makes bash report only `unexpected end of file`. |
+| `guardrails_warehouse_config.json` | — | The rails config. `cluster_up.sh` rewrites its model id to the specialist model in use. |
+| `openshell/` | — | Governor policy and sandbox definitions. |
 
-## Viewing the UI from your laptop
+## Restarting and resuming
 
-Compute nodes are not directly reachable, so tunnel through the login node:
+| Situation | What to do |
+|---|---|
+| Anything is down | `./deploy/runall.sh` |
+| Job `RUNNING`, one container died | The job re-runs `cluster_up.sh` itself within a minute. To force it: `srun --jobid=<ID> --overlap ./deploy/cluster_up.sh` |
+| Adapter code changed | `srun --jobid=<ID> --overlap bash deploy/redeploy_adapter.sh` |
+| UI code changed | Rebuild the bundle, then `srun --jobid=<ID> --overlap pkill -f 'showcase_server\.py'` — the monitor restarts it within ~60s |
+| You lost your SSH session | Nothing to do. Batch jobs are unaffected; reconnect and run `./deploy/stack_status.sh` |
 
-```bash
-ssh -N -L 8090:<STACK_NODE>:8090 ssh.axisapps.io -l <your-access-key>
-```
+The job requests the full 30 days the QoS allows, because **a running job's time
+limit cannot be raised by its owner** — `scontrol update` returns
+`Access/permission denied`. It has to be right at submission.
 
-Then open <http://127.0.0.1:8090>. Get `<STACK_NODE>` from `./deploy/stack_status.sh`.
+## Environment notes
 
-## GPU budget
+Several things are missing from a non-interactive `PATH` and fail silently:
 
-The Slurm quota is **4 GPUs**, and Ultra's smallest profile (`vllm-nvfp4-tp4-pp1-84.0`)
-needs exactly 4. Both NIMs therefore share the same GPUs and neither may take vLLM's
-default ~90% of each card:
-
-```bash
-ULTRA_GPU_UTIL=0.55       # ~151 GB of 275 GB per B300
-LIGHTNING_GPU_UTIL=0.12   # ~33 GB on GPU 3
-```
-
-Ultra starts first because tensor parallelism needs symmetric free memory on all
-four cards. Raise `ULTRA_GPU_UTIL` for a longer KV cache if you drop Lightning.
-
-## What is self-hosted vs. not
-
-Self-hosted on the node: cuOpt, the slotting adapter, NeMo Guardrails, the OpenShell
-Governor, and both Nemotron NIMs.
-
-Not self-hosted: **WMS, ERP and forecast data are synthetic** (`mocks/enterprise_services.py`)
-until `WMS_URL` / `ERP_URL` / `FORECAST_URL` point at real systems. The NVIDIA cloud NIM
-stays configured as an automatic fallback (`NIM_CLOUD_FALLBACK=true`) so the planner keeps
-working if a local NIM is down; set it to `false` to make that a hard failure.
-
-## Why cuOpt needs an adapter
-
-The planner posts to `CUOPT_URL/solve/slotting`, which cuOpt does not expose.
-`deploy/cuopt_adapter/` builds a linear assignment model where the cost of putting
-SKU *i* in slot *j* is `daily_picks(i) x distance_to_pick_face(j)`, submits it to
-cuOpt (`POST /cuopt/request`, then polls `/cuopt/solution/{reqId}` — the API is
-asynchronous), and maps the solution back to planner moves. If cuOpt is unreachable
-it returns 503 rather than inventing a plan.
-
-## OpenShell
-
-`services/openshell/` runs the Governor; `deploy/openshell/openshell-policies.yaml`
-declares the policy. Approvals are one-time per user except `write_wms`, which is
-`per_call` and needs a fresh admin approval every time.
-
-```bash
-curl -s http://<STACK_NODE>:8004/api/v1/requests      # pending approvals
-curl -s -X POST http://<STACK_NODE>:8004/api/v1/requests/<id>/approve \
-     -H 'Content-Type: application/json' -d '{"resolved_by":"admin"}'
-```
-
-The app keeps a local allowlist as a hard floor, so an unreachable Governor can never
-silently widen permissions.
+- **Slurm**: `export PATH=/cm/local/apps/slurm/current/bin:$PATH` and
+  `export SLURM_CONF=/cm/shared/apps/slurm/etc/slurm/slurm.conf`.
+- **Rootless docker**: `/cm/shared/apps/rootless-docker/bin`, per-user socket at
+  `unix:///raid/docker/tmp/xdg_runtime_dir_$(id -u)/docker.sock`. The daemon dies
+  with the job step that started it, so it must be started by the batch step
+  itself — never from a transient `srun --overlap` step.
+- **Node**: rootless install at `$HOME/opt/node/bin`, used only to build the bundle.
+- **`set -u` and the module system**: module init scripts reference unset
+  variables, so `module load` must be bracketed by `set +u` / `set -u`. Without
+  that, `cluster_up.sh` exits with no output at all.
+- **`/raid` is node-local.** A warm image cache does nothing for a job that lands
+  elsewhere, which is why `--nodelist=` is worth passing.
 
 ## Troubleshooting
+
+**GPU containers will not start**, with:
+
+```
+runc create failed: ... failed to fulfil mount request:
+open /run/nvidia-persistenced/socket: no such file or directory
+```
+
+The node ships a stale CDI spec referencing a socket that no longer exists, and
+it breaks **both** `--gpus "device=N"` and `--device nvidia.com/gpu=N`. Use
+`--runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=<GPU-UUID>` instead, which
+`cluster_up.sh` now does. UUIDs come from
+`nvidia-smi --query-gpu=uuid --format=csv,noheader`, and only the job's own GPUs
+are visible, so a UUID cannot accidentally name someone else's.
+
+**Why the NIMs are not self-hosted.** The Lightning NIM loads its weights, then
+logs `Your GPU does not have native support for FP4 computation` on a B300 —
+which does support FP4 natively — falls back to Marlin kernels and the engine
+core dies with `Engine core initialization failed`. Its vLLM build does not
+recognise this compute capability. NVIDIA hosts both models, so the stack uses
+those and leaves the GPUs for cuOpt and the rest of the team.
+
+**A reasoning model returns empty content** with `finish_reason: length`. The
+token budget has to cover the reasoning tokens too: Lightning spent 152
+completion tokens to answer `OK`. Give `max_tokens` real headroom.
 
 **Stale rootless-docker lock** after an unclean job exit:
 
@@ -143,9 +173,3 @@ silently widen permissions.
 rm -rf /raid/docker/tmp/xdg_runtime_dir_$(id -u)/dockerd-rootless
 start_rootless_docker
 ```
-
-**Stale shell exports shadow `.env`** — `services/config.py` lets the file win by
-default; set `WAREHOUSE_ENV_PRECEDENCE=process` if an orchestrator injects config.
-
-**Model cache** lives at `/raid/docker/tmp/nim-cache-$USER` (node-local NVMe, ~25 TB
-free). It is wiped with the node, so a job on a new node re-downloads weights.

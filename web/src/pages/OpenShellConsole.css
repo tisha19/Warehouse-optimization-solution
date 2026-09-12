@@ -395,6 +395,16 @@
     background: rgba(248, 113, 113, 0.14);
 }
 
+.os-revoke--all {
+    flex: none;
+    align-self: flex-start;
+    white-space: nowrap;
+}
+.os-revoke--all:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
 @media (max-width: 1100px) {
     .os-svc-grid {
         grid-template-columns: repeat(2, 1fr);
@@ -507,6 +517,111 @@
     flex-direction: column;
     gap: 8px;
 }
+
+/* Approve, plus a caret that opens the scope choice. */
+.os-approve__split {
+    position: relative;
+    display: flex;
+    gap: 1px;
+}
+.os-approve__split > .os-approve:first-child {
+    flex: 1;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+.os-approve__more {
+    padding: 8px 8px;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+.os-approve__more:disabled,
+.os-approve:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.os-approve__split--bulk {
+    flex: none;
+    align-self: flex-start;
+}
+
+/* Not green: this issues a standing grant rather than answering a held call. */
+.os-grant {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--os-text);
+    background: transparent;
+    border: 1px solid var(--os-border);
+    border-radius: 7px;
+    padding: 8px 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, border-color 0.15s;
+}
+.os-grant:hover:not(:disabled) {
+    border-color: #60a5fa;
+    background: rgba(96, 165, 250, 0.12);
+}
+.os-grant:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+.os-approve__split--bulk > .os-grant:first-child {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+.os-grant__more {
+    padding: 8px 8px;
+    border-left: none;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
+.os-scope {
+    position: absolute;
+    top: calc(100% + 5px);
+    right: 0;
+    z-index: 20;
+    width: 232px;
+    display: flex;
+    flex-direction: column;
+    background: var(--os-panel);
+    border: 1px solid var(--os-border);
+    border-radius: 9px;
+    overflow: hidden;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+}
+.os-scope button {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    align-items: flex-start;
+    text-align: left;
+    padding: 9px 12px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--os-border);
+    cursor: pointer;
+    color: var(--os-text);
+}
+.os-scope button:last-child {
+    border-bottom: none;
+}
+.os-scope button:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+.os-scope b {
+    font-size: 11.5px;
+    font-weight: 700;
+}
+.os-scope span {
+    font-size: 10px;
+    opacity: 0.65;
+}
 .os-reject {
     display: inline-flex;
     align-items: center;
@@ -614,6 +729,15 @@
 .os-sec__head {
     display: flex;
     flex-direction: column;
+}
+
+/* Declared after the base rule, which would otherwise re-stack the row and push
+   the action button onto a line of its own. */
+.os-sec__head--row {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
 }
 
 .os-svc__calls {

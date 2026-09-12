@@ -138,64 +138,40 @@ def slotting_headroom(source: Mapping[str, Any], constraints: Mapping[str, Any] 
     }
 
 
-def detect_problems(
-    kpis: Mapping[str, Any],
-    source: Mapping[str, Any],
-    constraints: Mapping[str, Any] | None = None,
-) -> List[Dict[str, Any]]:
-    """Findings stated as measured facts, each with the number behind it.
+def project_moves(source: Mapping[str, Any], moves: List[Mapping[str, Any]]) -> Dict[str, Any]:
+    """The warehouse as it would be if these moves were applied. Nothing is committed.
 
-    ``addressable`` marks the ones a slotting run can actually change. A gap is
-    only addressable while there is measured headroom left under the current
-    constraints; once the layout is optimal for the demand, a low coverage
-    figure is a fact about the demand, not a problem to solve.
+    The orchestrator needs to see what a solve actually bought before deciding
+    whether another pass is worth it, and it must not change the live snapshot
+    to find out.
     """
-    problems: List[Dict[str, Any]] = []
-    headroom = slotting_headroom(source, constraints)
-    improvable = headroom["headroom_pct"] >= 1.0
-    coverage = float(kpis["forward_pick_coverage_pct"])
-    if coverage < 60:
-        problems.append({
-            "id": "forward-pick-coverage",
-            "severity": "high" if coverage < 30 else "medium",
-            "addressable": improvable,
-            "title": (
-                "Fast-moving stock is not in the forward pick face"
-                if improvable
-                else "Forward pick face holds the highest-velocity lines it can"
-            ),
-            "detail": (
-                f"Only {coverage}% of class A demand is picked from zone A. The rest is walked to from reserve."
-                if improvable
-                else f"{coverage}% of class A demand is picked from zone A. The remainder sits behind higher-velocity lines, so no relocation would shorten the walk."
-            ),
-            "metric": f"{coverage}%",
-        })
-    if float(kpis["avg_distance_per_pick_m"]) > 40:
-        problems.append({
-            "id": "travel-per-pick",
-            "severity": "high",
-            "addressable": improvable,
-            "title": "Average pick trip is long",
-            "detail": f"Each pick walks {kpis['avg_distance_per_pick_m']}m round trip, {kpis['daily_travel_km']}km per day across the operation.",
-            "metric": f"{kpis['avg_distance_per_pick_m']}m",
-        })
-    if int(kpis["lines_below_reorder"]) > 0:
-        problems.append({
-            "id": "below-reorder",
-            "severity": "medium",
-            "addressable": False,
-            "title": "Lines are below their reorder point",
-            "detail": f"{kpis['lines_below_reorder']} SKUs sit below reorder point and depend on inbound arriving on time. Replenishment, not slotting, resolves this.",
-            "metric": str(kpis["lines_below_reorder"]),
-        })
-    if int(kpis["blocked_slots"]) > 0:
-        problems.append({
-            "id": "blocked-slots",
-            "severity": "low",
-            "addressable": False,
-            "title": "Slots are out of service",
-            "detail": f"{kpis['blocked_slots']} slots are blocked for maintenance and excluded from slotting. Maintenance resolves this.",
-            "metric": str(kpis["blocked_slots"]),
-        })
-    return problems
+    wms = dict(source.get("wms", {}))
+    layout = wms.get("warehouse_layout", [])
+    zone_by_slot = {str(r.get("slot_id")): int(r.get("zone_id", 0)) for r in layout}
+    known_slots = set(zone_by_slot)
+
+    occupancy = [dict(row) for row in wms.get("slot_occupancy", [])]
+    primary_index: Dict[str, int] = {}
+    for index, row in enumerate(occupancy):
+        primary_index.setdefault(str(row.get("sku_id")), index)
+
+    occupied = {str(row.get("slot_id")) for row in occupancy}
+    for move in moves:
+        sku_id = str(move.get("sku_id", move.get("sku", "")))
+        destination = str(move.get("to_slot", ""))
+        index = primary_index.get(sku_id)
+        if index is None or destination not in known_slots:
+            continue
+        origin = str(occupancy[index].get("slot_id"))
+        if destination in occupied and destination != origin:
+            continue
+        occupied.discard(origin)
+        occupied.add(destination)
+        occupancy[index]["slot_id"] = destination
+        occupancy[index]["zone_id"] = zone_by_slot[destination]
+
+    wms["slot_occupancy"] = occupancy
+    projected = dict(source)
+    projected["wms"] = wms
+    return projected
+

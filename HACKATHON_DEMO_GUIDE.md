@@ -9,21 +9,27 @@ On the cluster:
 
 ```bash
 cd ~/gsh-team07/Warehouse-optimization-solution
-sbatch deploy/slurm_stack.sbatch
-./deploy/stack_status.sh          # node + per-service health
+./deploy/runall.sh                # submits the job and waits for every service
+./deploy/stack_status.sh          # node + per-service health, starts nothing
 ```
 
-Six services must report healthy: cuOpt (5000), the slotting adapter (8002),
-NeMo Guardrails (8003), the OpenShell governor (8004), the Nemotron NIM (8000),
-and the WarehouseIQ UI (8090).
+Five services must report healthy: cuOpt (25000), the slotting adapter (28002),
+NeMo Guardrails (28003), the OpenShell governor (28004), and the WarehouseIQ UI
+(28090). Both Nemotron models are hosted by NVIDIA, so nothing serves them
+locally and the stack needs only one GPU.
 
-From your laptop:
+From your laptop, with your own access key. Leave it running:
 
 ```bash
-ssh -N -L 8090:<STACK_NODE>:8090 ssh.axisapps.io -l <your-access-key>
+./deploy/forwardallports.sh <your-access-key>
 ```
 
-Open <http://127.0.0.1:8090> at a browser width above 1400px so both side rails stay visible.
+Open <http://127.0.0.1:28090> at a browser width above 1400px so both side rails stay visible.
+
+Before presenting, open the OpenShell console and use **Grant all 9 to
+warehouse-planner** on the governed services card. Every gate is then cleared up
+front and the run completes without stopping for approvals; leave it ungranted
+if you want to show the governor holding a call instead.
 
 Optionally verify the backend first:
 

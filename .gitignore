@@ -24,3 +24,10 @@ warehouse-stack-*.log
 web/node_modules/
 web/dist/
 web/*.tsbuildinfo
+
+
+# Slurm job logs
+*.log
+
+# Scratch file for multi-line commit messages
+.commitmsg

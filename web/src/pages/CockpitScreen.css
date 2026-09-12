@@ -206,6 +206,69 @@
 .ck-gap--low {
     border-left-color: var(--text-muted);
 }
+/* One class per severity word. Green is deliberately absent: every card here is
+   a problem, and green reads as healthy. It belongs to .ck-resolved alone. */
+.ck-gap--severe {
+    border-left-color: var(--status-red);
+}
+.ck-gap--warning {
+    border-left-color: var(--status-amber);
+}
+.ck-gap--notable {
+    border-left-color: var(--accent-sky);
+}
+.ck-gap--info {
+    border-left-color: var(--border-strong);
+}
+
+/* A finding the solver cannot act on still states its figure, quietly. */
+.ck-gap--note .ck-gap__metric {
+    color: var(--text-muted);
+}
+.ck-gap__tag {
+    display: inline-block;
+    margin-top: 5px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border: 1px solid var(--border-card);
+    border-radius: 999px;
+    padding: 2px 7px;
+}
+
+/* Still a real gap, but the solver has proven it is out of reach, so it must
+   not shout like something the planner can act on. */
+.ck-gap--unreachable {
+    border-left-color: var(--border-strong);
+}
+.ck-gap--unreachable .ck-gap__metric {
+    color: var(--text-muted);
+}
+
+/* Held is a pause awaiting an operator, not a failure. */
+.ck-note--held {
+    border-left-color: var(--status-amber);
+}
+.ck-note--held code {
+    font-family: var(--mono, ui-monospace, Consolas, monospace);
+    font-size: 10.5px;
+    color: var(--status-amber);
+}
+.ck-note__link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent-cyan);
+    text-decoration: none;
+}
+.ck-note__link:hover {
+    text-decoration: underline;
+}
 .ck-resolved {
     border-left-color: var(--status-green);
     color: var(--status-green);
@@ -214,10 +277,18 @@
     border-left-color: var(--border-strong);
     color: var(--text-muted);
 }
+/* The metric is a bare figure, but a wordy one must not squeeze the title into
+   a sliver. Cap the column and let anything longer ellipsise. */
 .ck-gap__metric {
     font-size: 16px;
     font-weight: 600;
     min-width: 52px;
+    max-width: 84px;
+    flex: none;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .ck-gap strong,
 .ck-note strong,

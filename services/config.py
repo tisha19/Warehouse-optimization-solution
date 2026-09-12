@@ -63,6 +63,12 @@ class ProductionConfig:
     nim_api_key: str = _env("NIM_API_KEY", "", aliases=("NVIDIA_API_KEY",))
     nim_subagent_model: str = _env("NIM_SUBAGENT_MODEL", "", aliases=("LLM_SUBAGENT_MODEL",))
     nim_subagent_base_url: str = _env("NIM_SUBAGENT_BASE_URL", "")
+    # The orchestrator runs on NVIDIA's hosted Nemotron 3 Ultra; the specialists
+    # run on the Lightning NIM we serve ourselves. Keeping the two sets of
+    # credentials apart is what lets those be different endpoints.
+    nim_supervisor_base_url: str = _env("NIM_SUPERVISOR_BASE_URL", "")
+    nim_supervisor_model: str = _env("NIM_SUPERVISOR_MODEL", "")
+    nim_supervisor_api_key: str = _env("NIM_SUPERVISOR_API_KEY", "")
     nim_cloud_base_url: str = _env("NIM_CLOUD_BASE_URL", "https://integrate.api.nvidia.com/v1")
     nim_cloud_api_key: str = _env("NIM_CLOUD_API_KEY", "", aliases=("NVIDIA_API_KEY",))
     nim_cloud_model: str = _env("NIM_CLOUD_MODEL", "")
@@ -70,6 +76,9 @@ class ProductionConfig:
     cuopt_url: str = _env("CUOPT_URL", "", aliases=("CUOPT_SELF_HOSTED_URL", "NVIDIA_CUOPT_URL"))
     guardrails_url: str = _env("NEMO_GUARDRAILS_URL", "", aliases=("RAIL_API_URL",))
     guardrails_config_id: str = _env("NEMO_GUARDRAILS_CONFIG_ID", "warehouse")
+    # The rails run a model before answering, so they need far longer than a
+    # plain HTTP call; at 30s every check timed out into the local fallback.
+    guardrails_timeout_seconds: float = float(_env("NEMO_GUARDRAILS_TIMEOUT_SECONDS", "180"))
     openshell_url: str = _env("OPENSHELL_URL", "")
     approval_store: str = _env("APPROVAL_STORE", "approvals.json")
     request_timeout_seconds: float = float(_env("AGENT_REQUEST_TIMEOUT_SECONDS", "30"))
