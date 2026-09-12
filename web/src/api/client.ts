@@ -10,13 +10,15 @@ export type Kpis = {
     lines_below_reorder: number
 }
 
+export type Metric = { value: number; unit: string }
+
 export type Problem = {
     id: string
     severity: 'high' | 'medium' | 'low'
     addressable: boolean
     title: string
     detail: string
-    metric: string
+    metric: Metric | null
 }
 
 export type Zone = { id: string; label: string; slots: number; utilisation: number; distance: number }

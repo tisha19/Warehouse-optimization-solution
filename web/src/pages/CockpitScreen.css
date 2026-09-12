@@ -206,6 +206,14 @@
 .ck-gap--low {
     border-left-color: var(--text-muted);
 }
+/* Still a real gap, but the solver has proven it is out of reach, so it must
+   not shout like something the planner can act on. */
+.ck-gap--unreachable {
+    border-left-color: var(--border-strong);
+}
+.ck-gap--unreachable .ck-gap__metric {
+    color: var(--text-muted);
+}
 .ck-resolved {
     border-left-color: var(--status-green);
     color: var(--status-green);

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Activity, AlertTriangle, ArrowRight, CheckCircle2, Wrench } from 'lucide-react'
 import { useLive } from '../state/LiveState'
+import type { Metric } from '../api/client'
 import WarehouseMap from './WarehouseMap'
 import Sparkline from '../components/Sparkline'
 import './CockpitScreen.css'
@@ -12,6 +13,28 @@ const KPI_CARDS = [
     { key: 'forward_pick_coverage_pct', label: 'Class A in forward pick', unit: '% of A demand', better: 'higher' },
     { key: 'daily_picks', label: 'Picks per day', unit: 'forecast driven', better: 'higher' },
 ] as const
+
+/** The chip is narrow, so figures are shortened rather than wrapped or clipped. */
+function formatMetric(metric: Metric | null): string {
+    if (!metric || !Number.isFinite(metric.value)) return ''
+    const { value, unit } = metric
+    if (unit === '%') return `${value.toFixed(1)}%`
+    // Distances read as one token and are never abbreviated: 3029km, not 3.0k km.
+    if (unit === 'm' || unit === 'km') {
+        return `${Math.abs(value) >= 100 ? Math.round(value) : value.toFixed(1)}${unit}`
+    }
+    const abs = Math.abs(value)
+    const short =
+        abs >= 1_000_000
+            ? `${(value / 1_000_000).toFixed(1)}M`
+            : abs >= 10_000
+              ? `${Math.round(value / 1000)}k`
+              : Number.isInteger(value)
+                ? String(value)
+                : value.toFixed(1)
+    // Counted things need the noun to mean anything.
+    return unit ? `${short} ${unit}` : short
+}
 
 export default function CockpitScreen() {
     const { dashboard, layout, demand, run } = useLive()
@@ -34,6 +57,12 @@ export default function CockpitScreen() {
     const moves = planned.length > 0 ? planned : committed
     const showingCommitted = planned.length === 0 && committed.length > 0
     const lastCommit = dashboard.last_commit
+    // cuOpt has actually solved this layout under the constraints, so its result
+    // outranks the analysis model's guess at what is still worth moving. No
+    // recommended round means it found nothing, not that the plan was committed.
+    const planPending = planned.length > 0
+    const constrainedOptimum = run?.status === 'COMPLETE' && run.chosen_round === null
+    const actionable = planPending || (!constrainedOptimum && addressable.length > 0)
 
     return (
         <div className="app-body layout-cockpit">
@@ -174,9 +203,11 @@ export default function CockpitScreen() {
                                   ? findings
                                       ? 're-assessing…'
                                       : 'reading the warehouse…'
-                                  : addressable.length
-                                    ? `${addressable.length} actionable`
-                                    : 'none outstanding'}
+                                  : constrainedOptimum && findings
+                                    ? 'none reachable'
+                                    : addressable.length
+                                      ? `${addressable.length} actionable`
+                                      : 'none outstanding'}
                         </span>
                     </div>
                     {/* Only claim we have nothing to show when we genuinely have nothing. */}
@@ -200,10 +231,15 @@ export default function CockpitScreen() {
                     )}
                     {addressable.length ? (
                         addressable.map((problem) => (
-                            <div className={`ck-gap ck-gap--${problem.severity}`} key={problem.id}>
-                                <span className="ck-gap__metric">{problem.metric}</span>
+                            <div
+                                className={`ck-gap ck-gap--${constrainedOptimum ? 'unreachable' : problem.severity}`}
+                                key={problem.id}
+                            >
+                                {formatMetric(problem.metric) && (
+                                    <span className="ck-gap__metric">{formatMetric(problem.metric)}</span>
+                                )}
                                 <div>
-                                    <strong>{problem.title}</strong>
+                                    {problem.title && <strong>{problem.title}</strong>}
                                     <p>{problem.detail}</p>
                                 </div>
                             </div>
@@ -236,17 +272,40 @@ export default function CockpitScreen() {
 
                 <section className="ck-panel ck-next">
                     <div className="ck-panel__head">
-                        <span>{addressable.length ? 'What happens next' : 'Plan executed'}</span>
+                        <span>
+                            {planPending
+                                ? 'What happens next'
+                                : constrainedOptimum
+                                  ? 'Constrained optimum'
+                                  : lastCommit
+                                    ? 'Plan executed'
+                                    : actionable
+                                      ? 'What happens next'
+                                      : 'Nothing outstanding'}
+                        </span>
                     </div>
-                    {addressable.length ? (
+                    {planPending ? (
                         <>
                             <p className="ck-next__text">
-                                The DeepAgent reads this state, the specialists assess it, and cuOpt solves a constrained move
-                                plan. Nothing reaches the WMS without your approval.
+                                cuOpt has solved a constrained move plan of <b>{planned.length}</b> relocations. Nothing reaches
+                                the WMS without your approval.
                             </p>
                             <Link className="ck-btn ck-btn--primary" to="/plan">
-                                Build the move plan <ArrowRight size={15} />
+                                Review the move plan <ArrowRight size={15} />
                             </Link>
+                        </>
+                    ) : constrainedOptimum ? (
+                        <>
+                            <p className="ck-next__text">
+                                cuOpt solved this layout under your constraints and found no relocation that shortens picker
+                                travel. {lastCommit ? 'The plan has been written to the WMS and the' : 'The'} layout is at its
+                                constrained optimum.
+                            </p>
+                            <p className="ck-next__text">
+                                {addressable.length > 0
+                                    ? 'The gaps above remain measurable, but none can be closed within the current move cap. Raise the cap or generate a different warehouse to run the flow again.'
+                                    : 'Raise the move cap or generate a different warehouse to run the flow again.'}
+                            </p>
                         </>
                     ) : lastCommit ? (
                         <>
@@ -258,10 +317,32 @@ export default function CockpitScreen() {
                                 <b>{dashboard.baseline?.avg_distance_per_pick_m}m</b> to{' '}
                                 <b>{dashboard.kpis.avg_distance_per_pick_m}m</b>.
                             </p>
+                            {addressable.length ? (
+                                <>
+                                    <p className="ck-next__text">
+                                        The layout still shows {addressable.length} measurable{' '}
+                                        {addressable.length === 1 ? 'gap' : 'gaps'}. Whether another plan can close{' '}
+                                        {addressable.length === 1 ? 'it' : 'them'} is for cuOpt to decide, not this assessment.
+                                    </p>
+                                    <Link className="ck-btn ck-btn--primary" to="/plan">
+                                        Run the DeepAgent again <ArrowRight size={15} />
+                                    </Link>
+                                </>
+                            ) : (
+                                <p className="ck-next__text">
+                                    Nothing further is outstanding. Generate a different warehouse to run the flow again.
+                                </p>
+                            )}
+                        </>
+                    ) : actionable ? (
+                        <>
                             <p className="ck-next__text">
-                                cuOpt finds no further relocation that shortens travel under the current constraints. Generate a
-                                different warehouse to run the flow again.
+                                The DeepAgent reads this state, the specialists assess it, and cuOpt solves a constrained move
+                                plan. Nothing reaches the WMS without your approval.
                             </p>
+                            <Link className="ck-btn ck-btn--primary" to="/plan">
+                                Build the move plan <ArrowRight size={15} />
+                            </Link>
                         </>
                     ) : (
                         <p className="ck-next__text">

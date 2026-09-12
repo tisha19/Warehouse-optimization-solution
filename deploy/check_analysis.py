@@ -57,6 +57,8 @@ problems = analyse_slotting(
 )
 print(f"=== {len(problems)} finding(s) in {time.time() - started:.0f}s ===")
 for problem in problems:
-    print(f"\n[{problem['severity']}] addressable={problem['addressable']}  {problem['metric']}")
+    metric = problem["metric"]
+    shown = f"{metric['value']}{metric['unit']}" if metric else "(no figure)"
+    print(f"\n[{problem['severity']}] addressable={problem['addressable']}  {shown}")
     print(f"  {problem['title']}")
     print(f"  {problem['detail']}")
