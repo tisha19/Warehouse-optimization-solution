@@ -50,6 +50,8 @@ CUOPT_TIME_LIMIT = float(os.getenv("CUOPT_TIME_LIMIT_SECONDS", "300"))
 # enough to call the solver genuinely unavailable.
 SOLVE_ATTEMPTS = int(os.getenv("CUOPT_SOLVE_ATTEMPTS", "3"))
 RESUBMIT_DELAY = float(os.getenv("CUOPT_RESUBMIT_DELAY_SECONDS", "2"))
+# A watchdog restart takes cuOpt off the air for roughly twenty seconds.
+RESTART_WAIT_SECONDS = float(os.getenv("CUOPT_RESTART_WAIT_SECONDS", "90"))
 # This LP solves in under three seconds on a healthy worker, so a job still
 # silent after this long has been dropped rather than being hard.
 LOST_JOB_SECONDS = float(os.getenv("CUOPT_LOST_JOB_SECONDS", "30"))
@@ -214,6 +216,20 @@ def _find_primal(payload: Any) -> Optional[List[float]]:
     return None
 
 
+def _wait_until_solvable(seconds: float) -> bool:
+    """cuOpt takes a moment to serve again after a restart; resubmitting into
+    the gap just burns an attempt."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            if httpx.get(f"{CUOPT_SERVER_URL}/cuopt/health", timeout=5.0).status_code == 200:
+                return True
+        except httpx.HTTPError:
+            pass
+        time.sleep(2.0)
+    return False
+
+
 def _submit_and_poll(url: str, body: Dict[str, Any], budget: float) -> List[float]:
     """Submit one job and poll it until the solver answers or the job is lost.
 
@@ -226,7 +242,10 @@ def _submit_and_poll(url: str, body: Dict[str, Any], budget: float) -> List[floa
         response.raise_for_status()
         payload = response.json()
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail=f"cuOpt call failed: {exc}") from exc
+        # The watchdog restarts cuOpt under a running solve, so a dropped
+        # connection is a failed attempt to retry, not the end of the request.
+        LOG.warning("cuOpt call failed, will resubmit: %s", exc)
+        return []
 
     primal = _find_primal(payload)
     req_id = payload.get("reqId") if isinstance(payload, dict) else None
@@ -243,7 +262,8 @@ def _submit_and_poll(url: str, body: Dict[str, Any], budget: float) -> List[floa
             polled = httpx.get(f"{CUOPT_SERVER_URL}{CUOPT_RESULT_PATH}/{req_id}", timeout=REQUEST_TIMEOUT)
             polled.raise_for_status()
         except httpx.HTTPError as exc:
-            raise HTTPException(status_code=503, detail=f"cuOpt polling failed: {exc}") from exc
+            LOG.warning("cuOpt polling failed, will resubmit: %s", exc)
+            return []
         primal = _find_primal(polled.json())
         if primal:
             return primal
@@ -264,9 +284,11 @@ def _solve_with_cuopt(problem: Dict[str, Any], time_limit: float | None = None) 
         if primal:
             return primal
         if attempt < SOLVE_ATTEMPTS:
-            # The server restarts its worker in about a second, so a fresh
-            # submission usually lands on a live one.
-            LOG.warning("cuOpt dropped the job; resubmitting")
+            # The server restarts its worker in about a second, and the watchdog
+            # restarts the whole container in about twenty, so wait for it to
+            # serve again rather than spending the next attempt on a closed port.
+            LOG.warning("cuOpt gave no solution; waiting for it to serve again")
+            _wait_until_solvable(RESTART_WAIT_SECONDS)
             time.sleep(RESUBMIT_DELAY)
 
     raise HTTPException(
