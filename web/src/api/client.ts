@@ -14,7 +14,8 @@ export type Metric = { value: number; unit: string }
 
 export type Problem = {
     id: string
-    severity: 'high' | 'medium' | 'low'
+    /** 0-100, judged on what the gap costs the operation. */
+    severity: number
     addressable: boolean
     title: string
     detail: string

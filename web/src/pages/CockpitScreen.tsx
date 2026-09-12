@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ShieldAlert, Wrench } from 'lucide-react'
 import { useLive } from '../state/LiveState'
-import type { Metric } from '../api/client'
+import type { Metric, Problem } from '../api/client'
 import WarehouseMap from './WarehouseMap'
 import Sparkline from '../components/Sparkline'
 import './CockpitScreen.css'
@@ -34,6 +34,38 @@ function formatMetric(metric: Metric | null): string {
                     : value.toFixed(1)
     // Counted things need the noun to mean anything.
     return unit ? `${short} ${unit}` : short
+}
+
+/** Severity is 0-100; the band decides the colour so the model never picks it. */
+function severityBand(severity: number): string {
+    if (severity >= 75) return 'crit'
+    if (severity >= 50) return 'warn'
+    if (severity >= 30) return 'mild'
+    return 'calm'
+}
+
+/** Every finding renders the same: figure, what it is, what it costs. */
+function Finding({
+    problem,
+    muted = false,
+    outOfReach = false,
+}: {
+    problem: Problem
+    muted?: boolean
+    outOfReach?: boolean
+}) {
+    const band = muted ? 'unreachable' : severityBand(problem.severity)
+    const figure = formatMetric(problem.metric)
+    return (
+        <div className={`ck-gap ck-gap--${band}${outOfReach ? ' ck-gap--note' : ''}`}>
+            <span className="ck-gap__metric">{figure || '—'}</span>
+            <div>
+                {problem.title && <strong>{problem.title}</strong>}
+                <p>{problem.detail}</p>
+                {outOfReach && <span className="ck-gap__tag">not closable by slotting</span>}
+            </div>
+        </div>
+    )
 }
 
 export default function CockpitScreen() {
@@ -249,18 +281,7 @@ export default function CockpitScreen() {
                     )}
                     {addressable.length ? (
                         addressable.map((problem) => (
-                            <div
-                                className={`ck-gap ck-gap--${constrainedOptimum ? 'unreachable' : problem.severity}`}
-                                key={problem.id}
-                            >
-                                {formatMetric(problem.metric) && (
-                                    <span className="ck-gap__metric">{formatMetric(problem.metric)}</span>
-                                )}
-                                <div>
-                                    {problem.title && <strong>{problem.title}</strong>}
-                                    <p>{problem.detail}</p>
-                                </div>
-                            </div>
+                            <Finding key={problem.id} problem={problem} muted={constrainedOptimum} />
                         ))
                     ) : (
                         dashboard.analysis.status === 'ready' && (
@@ -278,13 +299,7 @@ export default function CockpitScreen() {
                         )
                     )}
                     {notes.map((note) => (
-                        <div className="ck-note" key={note.id}>
-                            <Wrench size={13} />
-                            <div>
-                                <strong>{note.title}</strong>
-                                <p>{note.detail}</p>
-                            </div>
-                        </div>
+                        <Finding key={note.id} problem={note} outOfReach />
                     ))}
                 </section>
 

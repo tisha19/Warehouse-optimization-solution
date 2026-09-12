@@ -40,21 +40,36 @@ measurably improve the situation. Set it to false when:
   - the cause is not slotting at all (replenishment, maintenance, locked stock).
 
 Return only JSON:
-{"problems": [{"id": "kebab-case-id", "severity": "high|medium|low",
+{"problems": [{"id": "kebab-case-id", "severity": 0-100,
   "addressable": true|false, "title": "short statement of fact",
   "detail": "one or two sentences naming the numbers behind it",
   "metric": {"value": 8.8, "unit": "%"}}]}
 
+`severity` is how much this costs the operation, as a whole number:
+  80-100  travel or service is badly hurt right now
+  55-79   a real cost worth planning around
+  30-54   worth knowing, modest impact
+  0-29    a remark; nothing is going wrong
+Judge it on the cost, not on whether a move plan can fix it.
+
 `metric` is the single figure that best captures the finding, split into a bare
-number and its unit. `value` must be a JSON number with no formatting: write
-1096.9, not "1,096.9 km". `unit` is one of "%", "m", "km", "slots", "moves",
-"picks" or "metre-picks". The panel renders it, so never put words in it.
+number and its unit. Every card shows it, so give one for every finding.
+`value` must be a JSON number with no formatting: write 1096.9, not
+"1,096.9 km". `unit` is one of "%", "m", "km", "slots", "moves", "picks" or
+"metre-picks". The panel renders it, so never put words in it.
+
+Because the figure is shown beside the title, do not open the title with it:
+write "forward pick coverage is far below target", not "forward pick coverage
+is only 8.8%".
 
 In `detail`, round large figures to something a person can read: write
 "1.36 million metre-picks", not "1360895.4".
 
 Order them most important first. Return at most four. If nothing is worth
 raising, return an empty list."""
+
+# Legacy wording still turns up; each maps to the middle of its band.
+_SEVERITY_WORDS = {"critical": 90, "high": 80, "medium": 55, "moderate": 55, "low": 30, "info": 15}
 
 # The panel renders the figure itself, so the model only has to pick one.
 _UNITS = {"%", "m", "km", "slots", "moves", "picks", "metre-picks"}
@@ -133,6 +148,18 @@ def _humanise(text: str) -> str:
     return _BIG_NUMBER.sub(lambda m: f"{round(float(m.group(0))):,}", text)
 
 
+def _severity(raw: Any) -> int:
+    """0-100. A word is accepted because the model still reaches for one."""
+    if isinstance(raw, str):
+        word = raw.strip().lower()
+        if word in _SEVERITY_WORDS:
+            return _SEVERITY_WORDS[word]
+    try:
+        return max(0, min(100, int(round(float(raw)))))
+    except (TypeError, ValueError):
+        return 55
+
+
 def _metric(raw: Any) -> Dict[str, Any] | None:
     """The figure for the panel, as a number the UI can format itself.
 
@@ -198,7 +225,7 @@ def analyse_slotting(
             continue
         cleaned.append({
             "id": str(item.get("id") or f"finding-{index}"),
-            "severity": str(item.get("severity", "medium")).lower(),
+            "severity": _severity(item.get("severity")),
             "addressable": bool(item.get("addressable")),
             "title": _humanise(str(item.get("title", "")).strip()),
             "detail": _humanise(str(item.get("detail", "")).strip()),

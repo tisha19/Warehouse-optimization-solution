@@ -206,6 +206,37 @@
 .ck-gap--low {
     border-left-color: var(--text-muted);
 }
+/* Severity bands, 0-100. Calm is a remark, not a problem. */
+.ck-gap--crit {
+    border-left-color: var(--status-red);
+}
+.ck-gap--warn {
+    border-left-color: var(--status-amber);
+}
+.ck-gap--mild {
+    border-left-color: var(--status-green);
+}
+.ck-gap--calm {
+    border-left-color: var(--border-strong);
+}
+
+/* A finding the solver cannot act on still states its figure, quietly. */
+.ck-gap--note .ck-gap__metric {
+    color: var(--text-muted);
+}
+.ck-gap__tag {
+    display: inline-block;
+    margin-top: 5px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border: 1px solid var(--border-card);
+    border-radius: 999px;
+    padding: 2px 7px;
+}
+
 /* Still a real gap, but the solver has proven it is out of reach, so it must
    not shout like something the planner can act on. */
 .ck-gap--unreachable {
