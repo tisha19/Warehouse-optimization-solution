@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Check, ChevronDown, ShieldAlert, X } from 'lucide-react'
+import { ArrowLeft, Check, ChevronDown, ShieldAlert, ShieldCheck, X } from 'lucide-react'
 import { api, type ApprovalScope, type GovernorService } from '../api/client'
 import { useLive } from '../state/LiveState'
 import './OpenShellConsole.css'
@@ -93,7 +93,8 @@ export default function OpenShellConsole() {
         }
     }
 
-    const revokeAll = async () => {        setRevokingAll(true)
+    const revokeAll = async () => {
+        setRevokingAll(true)
         try {
             await api.revokeAll()
             await refreshOpenShell()
@@ -257,16 +258,18 @@ export default function OpenShellConsole() {
                             <p className="os-sec__desc">
                                 Every outbound capability an agent can reach. The approval mode decides whether a call runs
                                 freely, once per user, or is held every single time. An agent only asks for the next service
-                                once the last one is allowed, so clear them up front to run without stopping.
+                                once the last one is allowed, so the queue never holds more than one — grant them ahead of
+                                time and a run finishes without stopping.
                             </p>
                         </div>
                         <div className="os-approve__split os-approve__split--bulk">
-                            <button className="os-approve" disabled={preBusy} onClick={() => void preapprove('session')}>
-                                <Check size={12} /> {preBusy ? 'Clearing…' : 'Clear all for this dataset'}
+                            <button className="os-grant" disabled={preBusy} onClick={() => void preapprove('session')}>
+                                <ShieldCheck size={12} />
+                                {preBusy ? 'Granting…' : `Grant all ${openshell.services.length} to warehouse-planner`}
                             </button>
                             <button
-                                className="os-approve os-approve__more"
-                                title="Approval scope"
+                                className="os-grant os-grant__more"
+                                title="How long the grant lasts"
                                 disabled={preBusy}
                                 onClick={() => setScopeMenu(scopeMenu === 'pre' ? null : 'pre')}
                             >
@@ -280,8 +283,8 @@ export default function OpenShellConsole() {
                                             void preapprove('session')
                                         }}
                                     >
-                                        <b>Clear all for this dataset</b>
-                                        <span>Stands until a new warehouse is generated</span>
+                                        <b>Grant for this dataset</b>
+                                        <span>Dropped when a new warehouse is generated</span>
                                     </button>
                                     <button
                                         onClick={() => {
@@ -289,8 +292,8 @@ export default function OpenShellConsole() {
                                             void preapprove('always')
                                         }}
                                     >
-                                        <b>Clear all always</b>
-                                        <span>Survives a new warehouse; revoke to undo</span>
+                                        <b>Grant until revoked</b>
+                                        <span>Survives a new warehouse</span>
                                     </button>
                                 </div>
                             )}

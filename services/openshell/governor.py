@@ -303,6 +303,18 @@ async def evaluate_gate(
                     ),
                 }
             continue
+        # This request's own resolution ends the wait too. Checking only the
+        # grant left a caller spinning when the request was denied and the
+        # grant removed in the same action, with nothing pending to approve.
+        current = st.requests.get(req["id"]) or {}
+        if current.get("status") == "denied":
+            return {
+                "decision": "denied",
+                "reason": (
+                    f"this request to '{service}' for user '{user}' was denied by "
+                    f"{current.get('resolved_by') or 'the admin'}"
+                ),
+            }
         grant = st.find_grant(user, service)
         if grant is not None and grant.get("status") == "approved":
             return await _allowed(f"approved by {grant.get('granted_by')}")

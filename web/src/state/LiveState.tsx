@@ -89,12 +89,17 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     // The analysis is produced on a background thread and nothing pushes the
     // result to the client, so the dashboard is polled rather than waiting for
     // an action to refresh it. Without this the panel can sit on "re-assessing"
-    // over stale findings until the page is reloaded.
+    // over stale findings until the page is reloaded. The governor is polled
+    // alongside it so the held-call badge is right on every screen, not only
+    // while a run happens to be in flight.
     useEffect(() => {
-        const pending = dashboard?.analysis.status === 'pending'
-        const poll = window.setInterval(() => void refreshWarehouse(), pending ? 2500 : 8000)
+        const waiting = dashboard?.analysis.status === 'pending' || dashboard?.analysis.status === 'held'
+        const poll = window.setInterval(() => {
+            void refreshWarehouse()
+            void refreshOpenShell()
+        }, waiting ? 2500 : 8000)
         return () => window.clearInterval(poll)
-    }, [dashboard?.analysis.status, refreshWarehouse])
+    }, [dashboard?.analysis.status, refreshWarehouse, refreshOpenShell])
 
     const startRun = useCallback(async () => {
         setBusy(true)

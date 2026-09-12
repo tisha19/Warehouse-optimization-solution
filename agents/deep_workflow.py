@@ -93,7 +93,7 @@ Judgement rules:
 """
 
 
-class _UsageRecorder(BaseCallbackHandler):
+class UsageRecorder(BaseCallbackHandler):
     """Reports every model answer, including ones nested inside a tool call."""
 
     def __init__(self, record: Callable[[str, int, int], None]) -> None:
@@ -229,6 +229,10 @@ class WarehouseDeepAgent:
             """Read the live WMS, ERP and forecast snapshot and return the measured KPIs, the
             slotting headroom a further run could still remove, and an aggregated summary of
             the warehouse. Call this before solving."""
+            # Auto-approved by policy, but the audit should still show that the
+            # agent reached into all three enterprise systems.
+            for service in ("read_wms", "read_erp", "read_forecast"):
+                agent._authorize(service, actor)
             source = agent._source_data()
             agent._run["source"] = source
             measured = agent._measure(source, constraints)
@@ -476,7 +480,7 @@ class WarehouseDeepAgent:
         supervisor = supervisor_model(self.config)
         # A subagent answers inside a tool call, so its turns never appear in the
         # stream run() reads; a callback is the only place to see their tokens.
-        specialist = specialist_model(self.config, callbacks=[_UsageRecorder(self._record_usage)])
+        specialist = specialist_model(self.config, callbacks=[UsageRecorder(self._record_usage)])
         prompt = ORCHESTRATOR_PROMPT.format(
             site=site,
             goal=goal,
@@ -504,6 +508,9 @@ class WarehouseDeepAgent:
         with self._lock:
             self._run = {"goal": business_goal, "actor": actor, "constraints": constraints, "rounds": []}
             self._authorize("llm.supervisor", actor)
+            # The specialists are a second model and a second egress path; they
+            # were being used on the supervisor's authorisation alone.
+            self._authorize("llm.subagent", actor)
             self._guard("input", {"goal": business_goal, "constraints": constraints})
 
             agent = self.build(actor, constraints, business_goal, site)

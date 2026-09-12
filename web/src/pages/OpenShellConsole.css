@@ -545,6 +545,42 @@
     align-self: flex-start;
 }
 
+/* Not green: this issues a standing grant rather than answering a held call. */
+.os-grant {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--os-text);
+    background: transparent;
+    border: 1px solid var(--os-border);
+    border-radius: 7px;
+    padding: 8px 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, border-color 0.15s;
+}
+.os-grant:hover:not(:disabled) {
+    border-color: #60a5fa;
+    background: rgba(96, 165, 250, 0.12);
+}
+.os-grant:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+.os-approve__split--bulk > .os-grant:first-child {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+.os-grant__more {
+    padding: 8px 8px;
+    border-left: none;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
 .os-scope {
     position: absolute;
     top: calc(100% + 5px);

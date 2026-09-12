@@ -214,6 +214,29 @@
 .ck-gap--unreachable .ck-gap__metric {
     color: var(--text-muted);
 }
+
+/* Held is a pause awaiting an operator, not a failure. */
+.ck-note--held {
+    border-left-color: var(--status-amber);
+}
+.ck-note--held code {
+    font-family: var(--mono, ui-monospace, Consolas, monospace);
+    font-size: 10.5px;
+    color: var(--status-amber);
+}
+.ck-note__link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent-cyan);
+    text-decoration: none;
+}
+.ck-note__link:hover {
+    text-decoration: underline;
+}
 .ck-resolved {
     border-left-color: var(--status-green);
     color: var(--status-green);

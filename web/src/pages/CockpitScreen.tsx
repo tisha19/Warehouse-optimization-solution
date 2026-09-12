@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Activity, AlertTriangle, ArrowRight, CheckCircle2, Wrench } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ShieldAlert, Wrench } from 'lucide-react'
 import { useLive } from '../state/LiveState'
 import type { Metric } from '../api/client'
 import WarehouseMap from './WarehouseMap'
@@ -200,15 +200,17 @@ export default function CockpitScreen() {
                         <span className="ck-panel__dim">
                             {dashboard.analysis.status === 'failed'
                                 ? 'analysis unavailable'
-                                : dashboard.analysis.status === 'pending'
-                                    ? findings
-                                        ? 're-assessing…'
-                                        : 'reading the warehouse…'
-                                    : constrainedOptimum && findings
-                                        ? 'none reachable'
-                                        : addressable.length
-                                            ? `${addressable.length} actionable`
-                                            : 'none outstanding'}
+                                : dashboard.analysis.status === 'held'
+                                    ? 'held by OpenShell'
+                                    : dashboard.analysis.status === 'pending'
+                                        ? findings
+                                            ? 're-assessing…'
+                                            : 'reading the warehouse…'
+                                        : constrainedOptimum && findings
+                                            ? 'none reachable'
+                                            : addressable.length
+                                                ? `${addressable.length} actionable`
+                                                : 'none outstanding'}
                         </span>
                     </div>
                     {/* Only claim we have nothing to show when we genuinely have nothing. */}
@@ -218,6 +220,21 @@ export default function CockpitScreen() {
                             <div>
                                 <strong>Assessing the layout against demand…</strong>
                                 <p>{dashboard.analysis.model} is judging which gaps a move plan could close.</p>
+                            </div>
+                        </div>
+                    )}
+                    {dashboard.analysis.status === 'held' && (
+                        <div className="ck-note ck-note--held">
+                            <ShieldAlert size={13} />
+                            <div>
+                                <strong>Waiting for OpenShell to allow the assessment.</strong>
+                                <p>
+                                    Reading the warehouse is model egress, so the governor holds it until an admin approves
+                                    <code> llm.subagent</code>. It continues on its own once approved.
+                                </p>
+                                <Link className="ck-note__link" to="/openshell">
+                                    Open the governor <ArrowRight size={13} />
+                                </Link>
                             </div>
                         </div>
                     )}

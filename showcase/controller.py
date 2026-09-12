@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from agents.deep_workflow import WarehouseDeepAgent
+from agents.deep_workflow import WarehouseDeepAgent, UsageRecorder
 from agents.digest import warehouse_digest
 from mocks.enterprise_adapters import SyntheticERPAdapter, SyntheticForecastAdapter, SyntheticWMSAdapter
 from mocks.enterprise_services import MockServiceState, resolve_seed
@@ -31,6 +31,10 @@ from showcase.kpis import slotting_headroom, warehouse_kpis
 
 ACTOR = "warehouse-planner"
 SITE = "DC-07 / North distribution centre"
+# A denied or failed assessment must not be retried on every dashboard poll.
+ANALYSIS_RETRY_SECONDS = 20.0
+# How long the assessment waits for an operator before it gives up.
+ANALYSIS_APPROVAL_WAIT = 600.0
 GOAL = (
     "Reduce picker travel over the next seven days. Stay within the move cap, keep cold-chain stock "
     "where it is, and prioritise the highest-demand lines."
@@ -75,6 +79,7 @@ class ShowcaseController:
         # Egress accrues over the dataset: committing a plan resets run_state, and
         # the total sent to NVIDIA is not undone by that.
         self.egress = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "delegations": 0, "solve_rounds": 0, "by_model": {}}
+        self.analysis_governance: Dict[str, Any] | None = None
         self._analysis: Dict[str, Any] = {"key": None, "status": "pending", "error": None, "problems": []}
         self.workflow = self.workflow_factory(
             config=self.config,
@@ -105,6 +110,40 @@ class ShowcaseController:
             "forecast": self.enterprise.forecast(14),
         }
 
+    def _hold_analysis(self, key: Any, reason: str) -> None:
+        """Waiting on the governor, with the previous findings still on screen."""
+        with self._lock:
+            self._analysis = {
+                "key": self._analysis.get("key"),
+                "inflight": key,
+                "status": "held",
+                "error": None,
+                "held_reason": reason,
+                "problems": self._analysis.get("problems", []),
+            }
+
+    def _record_egress(self, model: str, prompt: int, completion: int) -> None:
+        """Tokens spent outside a run still left the building."""
+        with self._lock:
+            self.egress["calls"] += 1
+            self.egress["prompt_tokens"] += prompt
+            self.egress["completion_tokens"] += completion
+            bucket = self.egress.setdefault("by_model", {}).setdefault(
+                model, {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+            )
+            bucket["calls"] += 1
+            bucket["prompt_tokens"] += prompt
+            bucket["completion_tokens"] += completion
+
+    def _record_openshell(self, decision: Any, service: str) -> None:
+        with self._lock:
+            self.analysis_governance = {
+                "service": service,
+                "allowed": bool(decision.allowed),
+                "reason": decision.reason,
+                "at": _now(),
+            }
+
     def _ensure_analysis(self, source: Mapping[str, Any], kpis: Mapping[str, Any]) -> None:
         """Interpret the current state once, off the request thread.
 
@@ -117,6 +156,11 @@ class ShowcaseController:
             return
         if self._analysis.get("inflight") == key:
             return
+        # The dashboard polls every few seconds; retrying a failure that fast
+        # would hammer the governor with a request per poll.
+        if self._analysis.get("status") == "failed":
+            if time.time() - float(self._analysis.get("failed_at") or 0) < ANALYSIS_RETRY_SECONDS:
+                return
 
         headroom = slotting_headroom(source, self.constraints)
         zones = [
@@ -129,8 +173,26 @@ class ShowcaseController:
 
         def work() -> None:
             try:
+                # This is model egress like any other, so it answers to the
+                # governor. Without the check, revoking every grant still left
+                # the cockpit quietly calling out.
+                decision = self.workflow.openshell.authorize("llm.subagent", ACTOR)
+                if not decision.allowed:
+                    # Held, not refused: show why and wait for the operator, the
+                    # same as a run does rather than giving up on first refusal.
+                    self._hold_analysis(key, decision.reason)
+                    decision = self.workflow.openshell.authorize(
+                        "llm.subagent", ACTOR, wait_seconds=ANALYSIS_APPROVAL_WAIT
+                    )
+                self._record_openshell(decision, "llm.subagent")
+                if not decision.allowed:
+                    raise PermissionError(decision.reason)
                 problems = analyse_slotting(
-                    specialist_model(self.config, max_tokens=ANALYSIS_MAX_TOKENS),
+                    specialist_model(
+                        self.config,
+                        max_tokens=ANALYSIS_MAX_TOKENS,
+                        callbacks=[UsageRecorder(self._record_egress)],
+                    ),
                     kpis,
                     headroom,
                     self.constraints,
@@ -138,7 +200,13 @@ class ShowcaseController:
                 )
                 result = {"key": key, "status": "ready", "error": None, "problems": problems}
             except Exception as exc:  # noqa: BLE001 - surfaced to the UI, never hidden
-                result = {"key": None, "status": "failed", "error": f"{type(exc).__name__}: {exc}", "problems": []}
+                result = {
+                    "key": None,
+                    "status": "failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "problems": [],
+                    "failed_at": time.time(),
+                }
             with self._lock:
                 self._analysis = result
 
@@ -175,6 +243,7 @@ class ShowcaseController:
             "analysis": {
                 "status": self._analysis.get("status", "pending"),
                 "error": self._analysis.get("error"),
+                "held_reason": self._analysis.get("held_reason"),
                 "model": self.config.nim_subagent_model or self.config.nim_model,
             },
             "zones": zones,

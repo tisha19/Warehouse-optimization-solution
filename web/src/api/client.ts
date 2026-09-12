@@ -43,7 +43,12 @@ export type Dashboard = {
     kpis: Kpis
     baseline: Kpis | null
     problems: Problem[]
-    analysis: { status: 'pending' | 'ready' | 'failed'; error: string | null; model: string }
+    analysis: {
+        status: 'pending' | 'held' | 'ready' | 'failed'
+        error: string | null
+        held_reason: string | null
+        model: string
+    }
     zones: Zone[]
     counts: Record<string, number>
     services: Service[]
