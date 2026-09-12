@@ -36,14 +36,6 @@ function formatMetric(metric: Metric | null): string {
     return unit ? `${short} ${unit}` : short
 }
 
-/** Severity is 0-100; the band decides the colour so the model never picks it. */
-function severityBand(severity: number): string {
-    if (severity >= 75) return 'crit'
-    if (severity >= 50) return 'warn'
-    if (severity >= 30) return 'mild'
-    return 'calm'
-}
-
 /** Every finding renders the same: figure, what it is, what it costs. */
 function Finding({
     problem,
@@ -54,7 +46,7 @@ function Finding({
     muted?: boolean
     outOfReach?: boolean
 }) {
-    const band = muted ? 'unreachable' : severityBand(problem.severity)
+    const band = muted ? 'unreachable' : problem.severity
     const figure = formatMetric(problem.metric)
     return (
         <div className={`ck-gap ck-gap--${band}${outOfReach ? ' ck-gap--note' : ''}`}>

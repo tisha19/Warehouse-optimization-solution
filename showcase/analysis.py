@@ -40,17 +40,23 @@ measurably improve the situation. Set it to false when:
   - the cause is not slotting at all (replenishment, maintenance, locked stock).
 
 Return only JSON:
-{"problems": [{"id": "kebab-case-id", "severity": 0-100,
+{"problems": [{"id": "kebab-case-id", "severity": "severe|warning|notable|info",
   "addressable": true|false, "title": "short statement of fact",
   "detail": "one or two sentences naming the numbers behind it",
   "metric": {"value": 8.8, "unit": "%"}}]}
 
-`severity` is how much this costs the operation, as a whole number:
-  80-100  travel or service is badly hurt right now
-  55-79   a real cost worth planning around
-  30-54   worth knowing, modest impact
-  0-29    a remark; nothing is going wrong
-Judge it on the cost, not on whether a move plan can fix it.
+`severity` is one of exactly four words, chosen on what the gap costs the
+operation rather than on whether a move plan can fix it:
+  "severe"   the operation is badly hurt now: forward pick coverage under 20%,
+             average pick travel over 60m, or a zone with no usable free slots.
+  "warning"  a real cost worth planning around: coverage 20-50%, travel 30-60m,
+             or a zone down to a handful of free slots.
+  "notable"  worth knowing, small impact: coverage above 50%, travel under 30m,
+             or utilisation and blocked slots that are not yet binding.
+  "info"     a remark. Nothing is going wrong.
+
+Say it the same way you scored it. Do not call something critical or starved
+and then mark it "notable"; if it really is small, describe it as small.
 
 `metric` is the single figure that best captures the finding, split into a bare
 number and its unit. Every card shows it, so give one for every finding.
@@ -68,8 +74,18 @@ In `detail`, round large figures to something a person can read: write
 Order them most important first. Return at most four. If nothing is worth
 raising, return an empty list."""
 
-# Legacy wording still turns up; each maps to the middle of its band.
-_SEVERITY_WORDS = {"critical": 90, "high": 80, "medium": 55, "moderate": 55, "low": 30, "info": 15}
+SEVERITIES = ("severe", "warning", "notable", "info")
+# Other wording, and the numbers an earlier schema asked for, still turn up.
+_SEVERITY_ALIASES = {
+    "critical": "severe", "high": "severe", "blocker": "severe", "urgent": "severe",
+    "medium": "warning", "moderate": "warning", "warn": "warning", "major": "warning",
+    "low": "notable", "minor": "notable", "small": "notable",
+    "informational": "info", "note": "info", "none": "info",
+}
+# The card colour comes from the number, so a finding that calls itself critical
+# and scores 40 renders green. The words win, because the operator reads them.
+_SEVERE_WORDS = re.compile(r"\b(critical|severe|badly|crippl|starv|acute|dire|urgent)\w*", re.I)
+_MINOR_WORDS = re.compile(r"\b(minor|slight|modest|marginal|negligible)\w*", re.I)
 
 # The panel renders the figure itself, so the model only has to pick one.
 _UNITS = {"%", "m", "km", "slots", "moves", "picks", "metre-picks"}
@@ -148,16 +164,20 @@ def _humanise(text: str) -> str:
     return _BIG_NUMBER.sub(lambda m: f"{round(float(m.group(0))):,}", text)
 
 
-def _severity(raw: Any) -> int:
-    """0-100. A word is accepted because the model still reaches for one."""
-    if isinstance(raw, str):
-        word = raw.strip().lower()
-        if word in _SEVERITY_WORDS:
-            return _SEVERITY_WORDS[word]
-    try:
-        return max(0, min(100, int(round(float(raw)))))
-    except (TypeError, ValueError):
-        return 55
+def _severity(raw: Any, wording: str = "") -> str:
+    """One of SEVERITIES. The wording wins, because the operator reads it."""
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        score = float(raw)
+        label = "severe" if score >= 80 else "warning" if score >= 50 else "notable" if score >= 20 else "info"
+    else:
+        word = str(raw or "").strip().lower()
+        label = word if word in SEVERITIES else _SEVERITY_ALIASES.get(word, "warning")
+
+    if _SEVERE_WORDS.search(wording):
+        return "severe"
+    if _MINOR_WORDS.search(wording) and label == "severe":
+        return "notable"
+    return label
 
 
 def _metric(raw: Any) -> Dict[str, Any] | None:
@@ -223,12 +243,14 @@ def analyse_slotting(
     for index, item in enumerate(problems[:5], 1):
         if not isinstance(item, dict):
             continue
+        title = _humanise(str(item.get("title", "")).strip())
+        detail = _humanise(str(item.get("detail", "")).strip())
         cleaned.append({
             "id": str(item.get("id") or f"finding-{index}"),
-            "severity": _severity(item.get("severity")),
+            "severity": _severity(item.get("severity"), f"{title} {detail}"),
             "addressable": bool(item.get("addressable")),
-            "title": _humanise(str(item.get("title", "")).strip()),
-            "detail": _humanise(str(item.get("detail", "")).strip()),
+            "title": title,
+            "detail": detail,
             "metric": _metric(item.get("metric")),
         })
     return cleaned

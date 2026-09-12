@@ -12,10 +12,11 @@ export type Kpis = {
 
 export type Metric = { value: number; unit: string }
 
+export type Severity = 'severe' | 'warning' | 'notable' | 'info'
+
 export type Problem = {
     id: string
-    /** 0-100, judged on what the gap costs the operation. */
-    severity: number
+    severity: Severity
     addressable: boolean
     title: string
     detail: string
