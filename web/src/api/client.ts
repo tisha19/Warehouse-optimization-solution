@@ -182,6 +182,7 @@ export type Run = {
     delegations: Delegation[]
     rounds: SolveRound[]
     chosen_round: number | null
+    solved_constraints: Constraints | null
     summary: SolveSummary | null
     guardrails: { stage: string; allowed: boolean; policy_id: string; reason: string; at: string }[]
     openshell: { service: string; actor: string; allowed: boolean; reason: string; at: string }[]
@@ -260,6 +261,7 @@ export const api = {
     run: () => call<Run>('/api/run'),
     startRun: () => post<Run>('/api/run/start'),
     setConstraints: (patch: Partial<Constraints>) => post<Constraints>('/api/constraints', patch),
+    resetConstraints: () => post<Constraints>('/api/constraints/reset'),
     decide: (moveId: string, decision: 'approved' | 'rejected' | 'pending') =>
         post<Run>('/api/plan/decide', { move_id: moveId, decision }),
     commit: () => post<CommitState>('/api/plan/commit'),

@@ -59,6 +59,8 @@ class WarehouseIQHandler(SimpleHTTPRequestHandler):
             self.execute(self.controller.reset)
         elif path == "/api/constraints":
             self.execute(lambda: self.controller.set_constraints(payload))
+        elif path == "/api/constraints/reset":
+            self.execute(self.controller.reset_constraints)
         elif path == "/api/plan/decide":
             self.execute(lambda: self.controller.decide(str(payload.get("move_id", "")), str(payload.get("decision", ""))))
         elif path == "/api/plan/commit":

@@ -148,6 +148,125 @@
     opacity: 0.75;
     cursor: default;
 }
+.pl-solve:disabled:not(.is-dirty) {
+    background: var(--bg-elevated);
+    border-color: var(--border-card);
+    color: var(--text-muted);
+    animation: none;
+}
+
+.pl-console__hint--stop {
+    margin-top: 8px;
+    color: var(--status-amber);
+}
+
+.pl-reset {
+    margin-top: 8px;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px;
+    border-radius: var(--radius-md);
+    font-size: 11px;
+    font-weight: 600;
+    background: transparent;
+    border: 1px solid var(--border-card);
+    color: var(--text-muted);
+}
+.pl-reset:hover:not(:disabled) {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+.pl-reset:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* ------------------------------------------------------- WMS commit audit */
+
+.pl-audit {
+    margin-top: 22px;
+    width: 100%;
+    max-width: 720px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel-2);
+    padding: 12px 14px 14px;
+    text-align: left;
+}
+
+.pl-audit__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding-bottom: 9px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.pl-audit__dim {
+    margin-left: auto;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    font-weight: 600;
+}
+
+.pl-audit__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.pl-audit__row {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.pl-audit__row:last-child { border-bottom: none; }
+
+.pl-audit__no {
+    font-family: var(--mono, ui-monospace, Consolas, monospace);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--status-green);
+    background: rgba(52, 211, 153, 0.1);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+    border-radius: var(--radius-sm);
+    padding: 3px 7px;
+    flex: none;
+}
+
+.pl-audit__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pl-audit__body strong { font-size: 12px; color: var(--text-primary); }
+.pl-audit__rej { color: var(--status-amber); font-weight: 600; }
+
+.pl-audit__meta {
+    font-size: 10px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pl-audit__delta {
+    margin-left: auto;
+    flex: none;
+    font-family: var(--mono, ui-monospace, Consolas, monospace);
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+.pl-audit__delta b { color: var(--status-green); }
 .pl-solve__spin {
     width: 13px;
     height: 13px;

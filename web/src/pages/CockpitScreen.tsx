@@ -58,10 +58,11 @@ export default function CockpitScreen() {
     const showingCommitted = planned.length === 0 && committed.length > 0
     const lastCommit = dashboard.last_commit
     // cuOpt has actually solved this layout under the constraints, so its result
-    // outranks the analysis model's guess at what is still worth moving. No
-    // recommended round means it found nothing, not that the plan was committed.
+    // outranks the analysis model's guess at what is still worth moving. A run
+    // whose rounds all failed proved nothing, so it is not an optimum.
     const planPending = planned.length > 0
-    const constrainedOptimum = run?.status === 'COMPLETE' && run.chosen_round === null
+    const constrainedOptimum =
+        run?.status === 'COMPLETE' && run.chosen_round === null && run.rounds.some((round) => round.status === 'done')
     const actionable = planPending || (!constrainedOptimum && addressable.length > 0)
 
     return (

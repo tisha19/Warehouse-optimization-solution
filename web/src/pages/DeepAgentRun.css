@@ -397,6 +397,15 @@
 
 .da__cta:hover { background: var(--accent-cyan); color: #04121f; }
 
+/* Nothing was produced to review, so this leads on rather than urges. */
+.da__cta--quiet {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-card);
+    color: var(--text-secondary);
+}
+
+.da__cta--quiet:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+
 .da__count {
     font-family: var(--mono);
     font-size: 10px;

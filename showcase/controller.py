@@ -8,6 +8,7 @@ reason and the UI reports it.
 
 from __future__ import annotations
 
+import copy
 import json
 import random
 import threading
@@ -43,11 +44,19 @@ def _now() -> str:
 
 
 class ShowcaseController:
+    DEFAULT_CONSTRAINTS: Dict[str, Any] = {
+        "max_moves": 30,
+        "locked_skus": [],
+        "cold_chain_locked": True,
+        "labour_minutes_per_window": 240,
+        "execution_windows": ["low-volume shifts"],
+    }
+
     def __init__(self, seed: int | None = None, workflow_factory: Callable[..., Any] = WarehouseDeepAgent):
         self.workflow_factory = workflow_factory
         self.config = ProductionConfig.from_env()
         self.goal = GOAL
-        self.constraints: Dict[str, Any] = {"max_moves": 30, "locked_skus": [], "cold_chain_locked": True, "labour_minutes_per_window": 240, "execution_windows": ["low-volume shifts"]}
+        self.constraints: Dict[str, Any] = copy.deepcopy(self.DEFAULT_CONSTRAINTS)
         self._lock = threading.Lock()
         self._load(resolve_seed(seed))
 
@@ -164,7 +173,9 @@ class ShowcaseController:
                 "forecast_rows": len(source["forecast"]["forecast"]),
             },
             "services": self.service_status(),
-            "commits": self.commit_history[-5:],
+            # The whole audit for this dataset: it is cleared when a new
+            # warehouse is generated, so it stays short on its own.
+            "commits": list(self.commit_history),
             "last_commit": self.commit_history[-1] if self.commit_history else None,
             "relocated_total": sum(int(c.get("relocated", 0)) for c in self.commit_history),
             "dataset_seed": self.seed,
@@ -230,6 +241,11 @@ class ShowcaseController:
             self.constraints["labour_minutes_per_window"] = max(30, min(960, int(payload["labour_minutes_per_window"])))
         return dict(self.constraints)
 
+    def reset_constraints(self) -> Dict[str, Any]:
+        """Back to the shipped limits, without touching the warehouse or the plan."""
+        self.constraints = copy.deepcopy(self.DEFAULT_CONSTRAINTS)
+        return dict(self.constraints)
+
     def service_status(self) -> List[Dict[str, Any]]:
         return [
             {"name": "Nemotron NIM (supervisor)", "endpoint": self.config.nim_base_url, "detail": self.config.nim_model},
@@ -255,6 +271,7 @@ class ShowcaseController:
             "delegations": [],
             "rounds": [],
             "chosen_round": None,
+            "solved_constraints": None,
             "guardrails": [],
             "openshell": [],
             "moves": [],
@@ -342,7 +359,12 @@ class ShowcaseController:
             if self.run_state.get("status") in ("RUNNING", "HALTED"):
                 return self._snapshot()
             self.run_state = self._idle_run()
-            self.run_state.update({"id": uuid.uuid4().hex[:12], "status": "RUNNING", "started_at": _now()})
+            self.run_state.update({
+                "id": uuid.uuid4().hex[:12],
+                "status": "RUNNING",
+                "started_at": _now(),
+                "solved_constraints": copy.deepcopy(self.constraints),
+            })
             self.decisions = {}
         threading.Thread(target=self._execute, daemon=True).start()
         return self.run()

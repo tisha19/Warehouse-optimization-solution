@@ -6,6 +6,7 @@ import {
     Check,
     ChevronDown,
     ChevronRight,
+    History,
     Lock,
     Play,
     RotateCcw,
@@ -13,7 +14,7 @@ import {
     Sliders,
     X,
 } from 'lucide-react'
-import { api, type CommitState, type Move } from '../api/client'
+import { api, type Commit, type CommitState, type Move } from '../api/client'
 import { useLive } from '../state/LiveState'
 import './PlanScreen.css'
 
@@ -37,8 +38,46 @@ const STATUS_LABEL: Record<string, string> = {
     pending: 'Awaiting Approval',
 }
 
+/** Everything written to the WMS for this dataset. Generating a new warehouse clears it. */
+function CommitHistory({ commits, seed }: { commits: Commit[]; seed?: number }) {
+    if (commits.length === 0) return null
+    const relocated = commits.reduce((sum, c) => sum + c.relocated, 0)
+    return (
+        <section className="pl-audit">
+            <div className="pl-audit__head">
+                <History size={13} />
+                <span>Written to the WMS</span>
+                <span className="pl-audit__dim">
+                    {commits.length} {commits.length === 1 ? 'plan' : 'plans'} · {relocated} relocations · dataset {seed ?? '—'}
+                </span>
+            </div>
+            <ol className="pl-audit__list">
+                {commits.map((commit, index) => (
+                    <li className="pl-audit__row" key={commit.approval_id || `${commit.at}-${index}`}>
+                        <span className="pl-audit__no">#{index + 1}</span>
+                        <div className="pl-audit__body">
+                            <strong>
+                                {commit.relocated} relocations
+                                {commit.rejected > 0 && <span className="pl-audit__rej"> · {commit.rejected} rejected</span>}
+                            </strong>
+                            <span className="pl-audit__meta">
+                                {new Date(commit.at).toLocaleString()} · approval {commit.approval_id || 'n/a'}
+                            </span>
+                        </div>
+                        <span className="pl-audit__delta">
+                            {Math.round(commit.kpis_before.daily_travel_km)} →{' '}
+                            <b>{Math.round(commit.kpis_after.daily_travel_km)}</b> km/day
+                        </span>
+                    </li>
+                ))}
+            </ol>
+        </section>
+    )
+}
+
 export default function PlanScreen() {
-    const { run, dashboard, demand, startRun, setConstraints, decide, refreshWarehouse, refreshRun } = useLive()
+    const { run, dashboard, demand, startRun, setConstraints, resetConstraints, decide, refreshWarehouse, refreshRun } =
+        useLive()
     const navigate = useNavigate()
     const [openMove, setOpenMove] = useState<string | null>(null)
     const [commitState, setCommitState] = useState<CommitState | null>(null)
@@ -46,9 +85,21 @@ export default function PlanScreen() {
 
     const constraints = run?.constraints
     const moves = run?.moves ?? []
+    const commits = dashboard?.commits ?? []
     const solved = run?.status === 'COMPLETE' && moves.length > 0
     const decisions = run?.decisions ?? {}
     const busy = run?.status === 'RUNNING' || run?.status === 'HALTED'
+    // cuOpt already proved these exact limits yield nothing, so re-running them
+    // would burn a few minutes to reproduce the same answer. Editing any limit
+    // makes it a different question and the button comes back. A run whose
+    // rounds all failed proved nothing, so that must stay retryable.
+    const solvedTheseConstraints =
+        run?.status === 'COMPLETE' &&
+        run.solved_constraints != null &&
+        JSON.stringify(run.solved_constraints) === JSON.stringify(constraints)
+    const solverAnswered = (run?.rounds ?? []).some((round) => round.status === 'done')
+    const exhausted = solvedTheseConstraints && solverAnswered && run?.chosen_round === null
+    const atMaxCap = (constraints?.max_moves ?? 0) >= 120
 
     useEffect(() => {
         if (!committing) return
@@ -174,9 +225,30 @@ export default function PlanScreen() {
                         )}
                     </div>
 
-                    <button className={`pl-solve${solved ? ' is-dirty' : ''}`} onClick={() => void launch()} disabled={busy}>
+                    <button
+                        className={`pl-solve${solved ? ' is-dirty' : ''}`}
+                        onClick={() => void launch()}
+                        disabled={busy || exhausted}
+                    >
                         {busy ? <span className="pl-solve__spin" /> : <Play size={13} />}
-                        {busy ? 'DeepAgent running…' : solved ? 'Re-optimise with cuOpt' : 'Run DeepAgent with these constraints'}
+                        {busy
+                            ? 'DeepAgent running…'
+                            : exhausted
+                              ? 'Already at the constrained optimum'
+                              : solved
+                                ? 'Re-optimise with cuOpt'
+                                : 'Run DeepAgent with these constraints'}
+                    </button>
+                    {exhausted && (
+                        <p className="pl-console__hint pl-console__hint--stop">
+                            cuOpt solved these exact limits and found no relocation that shortens travel.{' '}
+                            {atMaxCap
+                                ? 'The move cap is already at its maximum, so generate a different warehouse to run the flow again.'
+                                : 'Raise the move cap or unlock stock to ask a different question.'}
+                        </p>
+                    )}
+                    <button className="pl-reset" onClick={() => void resetConstraints()} disabled={busy}>
+                        <RotateCcw size={12} /> Reset constraints
                     </button>
                 </section>
 
@@ -237,8 +309,12 @@ export default function PlanScreen() {
                         </div>
 
                         <div className="pl-launch__actions">
-                            <button className="pl-btn pl-btn--primary" onClick={() => void launch()} disabled={busy}>
-                                <Play size={14} /> Run DeepAgent
+                            <button
+                                className="pl-btn pl-btn--primary"
+                                onClick={() => void launch()}
+                                disabled={busy || exhausted}
+                            >
+                                <Play size={14} /> {exhausted ? 'Already at the constrained optimum' : 'Run DeepAgent'}
                             </button>
                             <span className="pl-launch__note">
                                 <ShieldCheck size={13} /> Every privileged call is held by the OpenShell governor until an admin
@@ -260,6 +336,8 @@ export default function PlanScreen() {
                                 <span>Approved manifest becomes WMS move tasks</span>
                             </li>
                         </ol>
+
+                        <CommitHistory commits={commits} seed={dashboard?.dataset_seed} />
                     </div>
                 ) : (
                     <>
@@ -539,6 +617,8 @@ export default function PlanScreen() {
                                     ))}
                             </section>
                         </div>
+
+                        <CommitHistory commits={commits} seed={dashboard?.dataset_seed} />
                     </>
                 )}
             </main>
