@@ -83,7 +83,7 @@ class GuardrailsClient:
     """Screens planner input and output through the self-hosted NeMo Guardrails service."""
 
     def __init__(self, config: ProductionConfig):
-        self.client = JsonHttpClient(config.guardrails_url, config.request_timeout_seconds, config.nim_api_key) if config.guardrails_url else None
+        self.client = JsonHttpClient(config.guardrails_url, config.guardrails_timeout_seconds, config.nim_api_key) if config.guardrails_url else None
         self.config_id = config.guardrails_config_id
         self.model = config.nim_model
 

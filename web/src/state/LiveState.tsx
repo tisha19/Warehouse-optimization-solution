@@ -123,9 +123,9 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         })
     }, [guard, refreshWarehouse])
 
-    const decide = useCallback(        async (moveId: string, decision: 'approved' | 'rejected' | 'pending') => {
-            await guard(async () => setRun(await api.decide(moveId, decision)))
-        },
+    const decide = useCallback(async (moveId: string, decision: 'approved' | 'rejected' | 'pending') => {
+        await guard(async () => setRun(await api.decide(moveId, decision)))
+    },
         [guard],
     )
 

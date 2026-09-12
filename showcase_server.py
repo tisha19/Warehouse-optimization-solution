@@ -66,9 +66,15 @@ class WarehouseIQHandler(SimpleHTTPRequestHandler):
         elif path == "/api/plan/commit":
             self.execute(self.controller.commit)
         elif path == "/api/openshell/resolve":
-            self.execute(lambda: self.controller.resolve_request(str(payload.get("request_id", "")), bool(payload.get("approve", True))))
+            self.execute(lambda: self.controller.resolve_request(str(payload.get("request_id", "")), bool(payload.get("approve", True)), str(payload.get("scope", "call"))))
+        elif path == "/api/openshell/resolve-all":
+            self.execute(lambda: self.controller.resolve_all_pending(bool(payload.get("approve", True)), str(payload.get("scope", "call"))))
         elif path == "/api/openshell/revoke":
             self.execute(lambda: self.controller.revoke_grant(str(payload.get("user", "")), str(payload.get("service", ""))))
+        elif path == "/api/openshell/revoke-all":
+            self.execute(self.controller.revoke_all_grants)
+        elif path == "/api/openshell/preapprove":
+            self.execute(lambda: self.controller.preapprove_all(str(payload.get("scope", "session"))))
         else:
             self.send_error(404)
 

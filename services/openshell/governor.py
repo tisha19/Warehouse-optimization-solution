@@ -121,12 +121,14 @@ class GovernorState:
         return self.grants.get(self.grant_key(user, service))
 
     def add_grant(
-        self, user: str, service: str, *, granted_by: str, status: str = "approved"
+        self, user: str, service: str, *, granted_by: str, status: str = "approved",
+        scope: str = "call",
     ) -> dict[str, Any]:
         grant = {
             "user": user,
             "service": service,
             "status": status,  # approved | denied
+            "scope": scope,  # call | session
             "granted_by": granted_by,
             "granted_at": _utcnow(),
             "calls": 0,
@@ -240,8 +242,10 @@ async def evaluate_gate(
 
     # per_call + an explicit gate announcement: ignore any standing grant
     # (approved OR denied) and park a fresh request for the admin each time.
-    fresh_each_call = svc.approval == "per_call" and source == "gate"
+    # A session-scoped approval is the admin deliberately opting out of that.
     grant = st.find_grant(user, service)
+    session_cleared = grant is not None and grant.get("status") == "approved" and grant.get("scope") in ("session", "always")
+    fresh_each_call = svc.approval == "per_call" and source == "gate" and not session_cleared
     if not fresh_each_call and grant is not None:
         if grant.get("status") == "approved":
             return await _allowed()
@@ -371,10 +375,21 @@ class GateRequest(BaseModel):
 class ResolveRequest(BaseModel):
     resolved_by: str = Field(default="admin")
     reason: str | None = None
+    # "call" resolves this request alone; "session" stands until the dataset
+    # changes; "always" survives that too. Only the latter two stop a per_call
+    # service asking on every call.
+    scope: str = Field(default="call")
 
 
 class PolicyUpdate(BaseModel):
     yaml: str
+
+
+class GrantRequest(BaseModel):
+    user: str
+    service: str
+    granted_by: str = Field(default="admin")
+    scope: str = Field(default="session")
 
 
 @app.get("/api/v1/healthz")
@@ -490,6 +505,7 @@ async def _resolve_request(request_id: str, *, approve: bool, payload: ResolveRe
         req["service"],
         granted_by=payload.resolved_by,
         status="approved" if approve else "denied",
+        scope=payload.scope if approve else "call",
     )
     st.register(
         {
@@ -525,16 +541,63 @@ async def list_grants() -> list[dict[str, Any]]:
     )
 
 
+@app.post("/api/v1/grants")
+async def create_grant(payload: GrantRequest) -> dict[str, Any]:
+    """Clear a service before it is asked for.
+
+    An agent only requests the next service once the previous one is allowed,
+    so a queue of them never appears for the admin to approve in one go. This
+    is how a run is authorised up front instead of gate by gate.
+    """
+    st = get_state()
+    scope = payload.scope if payload.scope in ("call", "session", "always") else "session"
+    async with st.lock:
+        grant = st.add_grant(
+            payload.user, payload.service, granted_by=payload.granted_by, scope=scope
+        )
+        # A run already parked on this service should resume, not keep waiting.
+        for req in st.requests.values():
+            if (
+                req.get("status") == "pending"
+                and req.get("user") == payload.user
+                and req.get("service") == payload.service
+            ):
+                req["status"] = "approved"
+                req["resolved_at"] = _utcnow()
+                req["resolved_by"] = payload.granted_by
+                req["reason"] = f"pre-approved ({scope})"
+        st.save_requests()
+    st.register(
+        {
+            "user": payload.user,
+            "service": payload.service,
+            "operation": "pre_approval",
+            "decision": "approved",
+            "source": "admin",
+            "note": f"granted up front ({scope})",
+        }
+    )
+    async with st.approval_changed:
+        st.approval_changed.notify_all()
+    return grant
+
+
 @app.delete("/api/v1/grants")
-async def revoke_all_grants() -> dict[str, Any]:
+async def revoke_all_grants(keep_always: bool = False) -> dict[str, Any]:
     """Admin reset: revoke every grant at once (approved and denied alike).
 
     Every user goes back through the approval flow on their next gated call.
     In-flight pending requests are also cleared so stale approvals cannot
-    linger past the reset."""
+    linger past the reset. ``keep_always`` spares grants the admin marked as
+    standing, which is what a change of dataset wants rather than a full reset."""
     st = get_state()
-    revoked = len(st.grants)
-    st.grants.clear()
+    if keep_always:
+        kept = {k: g for k, g in st.grants.items() if g.get("scope") == "always"}
+        revoked = len(st.grants) - len(kept)
+        st.grants = kept
+    else:
+        revoked = len(st.grants)
+        st.grants.clear()
     st.save_grants()
     cleared_pending = 0
     for req in st.requests.values():

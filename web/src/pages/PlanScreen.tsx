@@ -234,10 +234,10 @@ export default function PlanScreen() {
                         {busy
                             ? 'DeepAgent running…'
                             : exhausted
-                              ? 'Already at the constrained optimum'
-                              : solved
-                                ? 'Re-optimise with cuOpt'
-                                : 'Run DeepAgent with these constraints'}
+                                ? 'Already at the constrained optimum'
+                                : solved
+                                    ? 'Re-optimise with cuOpt'
+                                    : 'Run DeepAgent with these constraints'}
                     </button>
                     {exhausted && (
                         <p className="pl-console__hint pl-console__hint--stop">

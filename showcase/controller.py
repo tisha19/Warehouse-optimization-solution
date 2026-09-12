@@ -43,6 +43,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _scope(value: str) -> str:
+    return value if value in ("call", "session", "always") else "call"
+
+
 class ShowcaseController:
     DEFAULT_CONSTRAINTS: Dict[str, Any] = {
         "max_moves": 30,
@@ -68,6 +72,9 @@ class ShowcaseController:
         self.commit_history = []
         self.commit_state = {"status": "IDLE", "service": "write_wms", "error": None, "commit": None}
         self.baseline_kpis = None
+        # Egress accrues over the dataset: committing a plan resets run_state, and
+        # the total sent to NVIDIA is not undone by that.
+        self.egress = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "delegations": 0, "solve_rounds": 0}
         self._analysis: Dict[str, Any] = {"key": None, "status": "pending", "error": None, "problems": []}
         self.workflow = self.workflow_factory(
             config=self.config,
@@ -81,6 +88,12 @@ class ShowcaseController:
         """Generate a different warehouse and forget everything about the last one."""
         with self._lock:
             self._load(random.SystemRandom().randrange(1, 2**31))
+        # Grants made for the warehouse that is now gone do not carry over,
+        # unless the admin marked them as standing.
+        try:
+            self._governor("/api/v1/grants?keep_always=true", "DELETE")
+        except Exception:  # noqa: BLE001 - the governor being down must not block a reset
+            pass
         return self.dashboard()
 
     # ---------------------------------------------------------------- dashboard
@@ -290,7 +303,11 @@ class ShowcaseController:
     def _on_workflow_event(self, kind: str, payload: Mapping[str, Any]) -> None:
         with self._lock:
             run = self.run_state
-            if kind == "orchestrator_thinking":
+            if kind == "harness":
+                run["orchestrator"]["harness"] = dict(payload)
+            elif kind == "usage":
+                run["usage"] = dict(payload)
+            elif kind == "orchestrator_thinking":
                 text = str(payload.get("reasoning") or payload.get("content") or "").strip()
                 if text:
                     run["orchestrator"]["thinking"].append(text)
@@ -431,6 +448,12 @@ class ShowcaseController:
             "validation": state.get("validation"),
             "chosen_round": chosen.get("round"),
         })
+        run_usage = dict(state.get("usage") or {})
+        self.egress["calls"] += int(run_usage.get("calls", 0))
+        self.egress["prompt_tokens"] += int(run_usage.get("prompt_tokens", 0))
+        self.egress["completion_tokens"] += int(run_usage.get("completion_tokens", 0))
+        self.egress["delegations"] += len(self.run_state.get("delegations") or [])
+        self.egress["solve_rounds"] += len(self.run_state.get("rounds") or [])
 
     @staticmethod
     def _normalise_move(index: int, raw: Mapping[str, Any], sku_by_id: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
@@ -559,43 +582,100 @@ class ShowcaseController:
 
     def telemetry(self) -> Dict[str, Any]:
         harness = dict(self.run_state.get("orchestrator", {}).get("harness") or {})
-        usage = dict(self.run_state.get("usage") or {})
-        delegations = len(self.run_state.get("delegations") or [])
+        # A finished run is already folded into the dataset tally; an unfinished
+        # one is not, so only that one is added on top.
+        live = self.run_state.get("status") in ("RUNNING", "HALTED")
+        usage = dict(self.run_state.get("usage") or {}) if live else {}
+        delegations = len(self.run_state.get("delegations") or []) if live else 0
+        rounds = len(self.run_state.get("rounds") or []) if live else 0
+
+        calls = self.egress["calls"] + int(usage.get("calls", 0))
+        prompt_tokens = self.egress["prompt_tokens"] + int(usage.get("prompt_tokens", 0))
+        completion_tokens = self.egress["completion_tokens"] + int(usage.get("completion_tokens", 0))
+        specialist_calls = self.egress["delegations"] + delegations
         return {
             "models": [
                 {
                     "role": "orchestrator",
                     "model": self.config.nim_supervisor_model,
                     "endpoint": self.config.nim_supervisor_base_url,
-                    "calls": usage.get("calls", 0),
-                    "prompt_tokens": usage.get("prompt_tokens", 0),
-                    "completion_tokens": usage.get("completion_tokens", 0),
+                    "calls": calls,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
                     "harness_middleware": len(harness.get("middleware") or []),
                 },
                 {
                     "role": "specialists",
                     "model": self.config.nim_subagent_model or self.config.nim_model,
                     "endpoint": self.config.nim_subagent_base_url or self.config.nim_base_url,
-                    "calls": delegations,
+                    "calls": specialist_calls,
                     # Subagents run isolated, so their usage never reaches this process.
                     "prompt_tokens": None,
                     "completion_tokens": None,
                 },
             ],
             "totals": {
-                "calls": usage.get("calls", 0) + delegations,
-                "prompt_tokens": usage.get("prompt_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens", 0),
+                "calls": calls + specialist_calls,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
             },
-            "solve_rounds": len(self.run_state.get("rounds") or []),
+            "solve_rounds": self.egress["solve_rounds"] + rounds,
             "commits": len(self.commit_history),
         }
 
-    def resolve_request(self, request_id: str, approve: bool) -> Dict[str, Any]:
+    def resolve_request(self, request_id: str, approve: bool, scope: str = "call") -> Dict[str, Any]:
         action = "approve" if approve else "deny"
-        self._governor(f"/api/v1/requests/{request_id}/{action}", "POST", {"resolved_by": "warehouseiq-admin"})
+        self._governor(
+            f"/api/v1/requests/{request_id}/{action}",
+            "POST",
+            {"resolved_by": "warehouseiq-admin", "scope": _scope(scope)},
+        )
+        return self.openshell_overview()
+
+    def resolve_all_pending(self, approve: bool, scope: str = "call") -> Dict[str, Any]:
+        """Clear the whole queue at once: one run gates several services in a row."""
+        action = "approve" if approve else "deny"
+        body = {"resolved_by": "warehouseiq-admin", "scope": _scope(scope)}
+        failures = []
+        for request in self._governor("/api/v1/requests?status=pending") or []:
+            request_id = str(request.get("id", ""))
+            if not request_id:
+                continue
+            try:
+                self._governor(f"/api/v1/requests/{request_id}/{action}", "POST", body)
+            except Exception as exc:  # noqa: BLE001 - surfaced, never hidden
+                failures.append(f"{request.get('service', request_id)}: {type(exc).__name__}")
+        if failures:
+            raise RuntimeError("could not resolve " + ", ".join(failures))
+        return self.openshell_overview()
+
+    def preapprove_all(self, scope: str = "session") -> Dict[str, Any]:
+        """Clear every governed service up front so a run is not gated step by step."""
+        wanted = _scope(scope)
+        if wanted == "call":
+            wanted = "session"
+        failures = []
+        for service in self._governor("/api/v1/services") or []:
+            name = str(service.get("name") or service.get("service") or "")
+            if not name:
+                continue
+            try:
+                self._governor(
+                    "/api/v1/grants",
+                    "POST",
+                    {"user": ACTOR, "service": name, "granted_by": "warehouseiq-admin", "scope": wanted},
+                )
+            except Exception as exc:  # noqa: BLE001 - surfaced, never hidden
+                failures.append(f"{name}: {type(exc).__name__}")
+        if failures:
+            raise RuntimeError("could not pre-approve " + ", ".join(failures))
         return self.openshell_overview()
 
     def revoke_grant(self, user: str, service: str) -> Dict[str, Any]:
         self._governor(f"/api/v1/grants/{user}/{service}", "DELETE")
+        return self.openshell_overview()
+
+    def revoke_all_grants(self) -> Dict[str, Any]:
+        """Drop every standing grant so the next run has to ask for each one again."""
+        self._governor("/api/v1/grants", "DELETE")
         return self.openshell_overview()

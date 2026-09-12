@@ -28,10 +28,10 @@ function formatMetric(metric: Metric | null): string {
         abs >= 1_000_000
             ? `${(value / 1_000_000).toFixed(1)}M`
             : abs >= 10_000
-              ? `${Math.round(value / 1000)}k`
-              : Number.isInteger(value)
-                ? String(value)
-                : value.toFixed(1)
+                ? `${Math.round(value / 1000)}k`
+                : Number.isInteger(value)
+                    ? String(value)
+                    : value.toFixed(1)
     // Counted things need the noun to mean anything.
     return unit ? `${short} ${unit}` : short
 }
@@ -201,14 +201,14 @@ export default function CockpitScreen() {
                             {dashboard.analysis.status === 'failed'
                                 ? 'analysis unavailable'
                                 : dashboard.analysis.status === 'pending'
-                                  ? findings
-                                      ? 're-assessing…'
-                                      : 'reading the warehouse…'
-                                  : constrainedOptimum && findings
-                                    ? 'none reachable'
-                                    : addressable.length
-                                      ? `${addressable.length} actionable`
-                                      : 'none outstanding'}
+                                    ? findings
+                                        ? 're-assessing…'
+                                        : 'reading the warehouse…'
+                                    : constrainedOptimum && findings
+                                        ? 'none reachable'
+                                        : addressable.length
+                                            ? `${addressable.length} actionable`
+                                            : 'none outstanding'}
                         </span>
                     </div>
                     {/* Only claim we have nothing to show when we genuinely have nothing. */}
@@ -277,12 +277,12 @@ export default function CockpitScreen() {
                             {planPending
                                 ? 'What happens next'
                                 : constrainedOptimum
-                                  ? 'Constrained optimum'
-                                  : lastCommit
-                                    ? 'Plan executed'
-                                    : actionable
-                                      ? 'What happens next'
-                                      : 'Nothing outstanding'}
+                                    ? 'Constrained optimum'
+                                    : lastCommit
+                                        ? 'Plan executed'
+                                        : actionable
+                                            ? 'What happens next'
+                                            : 'Nothing outstanding'}
                         </span>
                     </div>
                     {planPending ? (
@@ -330,9 +330,16 @@ export default function CockpitScreen() {
                                     </Link>
                                 </>
                             ) : (
-                                <p className="ck-next__text">
-                                    Nothing further is outstanding. Generate a different warehouse to run the flow again.
-                                </p>
+                                <>
+                                    <p className="ck-next__text">
+                                        This assessment finds nothing further worth moving, but the warehouse changed when the
+                                        plan was written and cuOpt has not solved it since. Only a run can confirm the layout is
+                                        finished.
+                                    </p>
+                                    <Link className="ck-btn ck-btn--primary" to="/plan">
+                                        Run the DeepAgent again <ArrowRight size={15} />
+                                    </Link>
+                                </>
                             )}
                         </>
                     ) : actionable ? (

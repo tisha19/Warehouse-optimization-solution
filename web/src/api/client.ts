@@ -25,6 +25,8 @@ export type Zone = { id: string; label: string; slots: number; utilisation: numb
 
 export type Service = { name: string; endpoint: string; detail: string }
 
+export type ApprovalScope = 'call' | 'session' | 'always'
+
 export type Commit = {
     at: string
     approval_id: string
@@ -268,6 +270,11 @@ export const api = {
     commitStatus: () => call<CommitState>('/api/plan/commit'),
     reset: () => post<Dashboard>('/api/reset'),
     openshell: () => call<OpenShell>('/api/openshell'),
-    resolve: (requestId: string, approve: boolean) => post<OpenShell>('/api/openshell/resolve', { request_id: requestId, approve }),
+    resolve: (requestId: string, approve: boolean, scope: ApprovalScope = 'call') =>
+        post<OpenShell>('/api/openshell/resolve', { request_id: requestId, approve, scope }),
+    resolveAll: (approve: boolean, scope: ApprovalScope = 'call') =>
+        post<OpenShell>('/api/openshell/resolve-all', { approve, scope }),
     revoke: (user: string, service: string) => post<OpenShell>('/api/openshell/revoke', { user, service }),
+    revokeAll: () => post<OpenShell>('/api/openshell/revoke-all'),
+    preapprove: (scope: ApprovalScope = 'session') => post<OpenShell>('/api/openshell/preapprove', { scope }),
 }

@@ -464,6 +464,9 @@ class WarehouseDeepAgent:
 
             agent = self.build(actor, constraints, business_goal, site)
             self._run["harness"] = profile_report(supervisor_model(self.config))
+            # The profile is static config, so the console can show it for the
+            # whole run rather than only once the run returns.
+            self._emit("harness", self._run["harness"])
             started = time.perf_counter()
             messages = self._stream(agent, business_goal)
             self._run["duration_ms"] = round((time.perf_counter() - started) * 1000)
@@ -508,6 +511,8 @@ class WarehouseDeepAgent:
             totals["calls"] += 1
             totals["prompt_tokens"] += int(usage.get("input_tokens", 0) or 0)
             totals["completion_tokens"] += int(usage.get("output_tokens", 0) or 0)
+            # Egress is worth watching while it happens, not only once it is over.
+            self._emit("usage", dict(totals))
 
         if calls:
             if reasoning or content.strip():
