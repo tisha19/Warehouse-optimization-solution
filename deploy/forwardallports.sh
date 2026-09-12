@@ -64,6 +64,17 @@ get(){ printf '%s\n' "$STATE" | grep -m1 -E "^$1=" | cut -d= -f2- ; }
 NODE=$(get STACK_NODE)
 [ -n "$NODE" ] || { echo "error: state file has no STACK_NODE" >&2; exit 1; }
 
+# A job being cancelled can re-stamp the state file with its own dying node
+# after a replacement has recorded the live one, so Slurm is asked to confirm.
+LIVE_NODE=$(ssh -o BatchMode=yes "$SSH_HOST" -l "$KEY" \
+  "PATH=/cm/local/apps/slurm/current/bin:\$PATH \
+   SLURM_CONF=/cm/shared/apps/slurm/etc/slurm/slurm.conf \
+   squeue -u '$OWNER' -h -t RUNNING -n warehouse-stack -o '%N' 2>/dev/null | tail -1" 2>/dev/null | tr -d '[:space:]')
+if [ -n "$LIVE_NODE" ] && [ "$LIVE_NODE" != "$NODE" ]; then
+  echo "state file says $NODE but the stack job is on $LIVE_NODE - using $LIVE_NODE"
+  NODE="$LIVE_NODE"
+fi
+
 # label:remote-port pairs, in the order they are shown.
 SERVICES="
 WarehouseIQ UI:$(get STACK_APP_PORT):28090

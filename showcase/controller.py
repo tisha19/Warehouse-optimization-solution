@@ -74,7 +74,7 @@ class ShowcaseController:
         self.baseline_kpis = None
         # Egress accrues over the dataset: committing a plan resets run_state, and
         # the total sent to NVIDIA is not undone by that.
-        self.egress = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "delegations": 0, "solve_rounds": 0}
+        self.egress = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "delegations": 0, "solve_rounds": 0, "by_model": {}}
         self._analysis: Dict[str, Any] = {"key": None, "status": "pending", "error": None, "problems": []}
         self.workflow = self.workflow_factory(
             config=self.config,
@@ -454,6 +454,12 @@ class ShowcaseController:
         self.egress["completion_tokens"] += int(run_usage.get("completion_tokens", 0))
         self.egress["delegations"] += len(self.run_state.get("delegations") or [])
         self.egress["solve_rounds"] += len(self.run_state.get("rounds") or [])
+        for model, counts in (run_usage.get("by_model") or {}).items():
+            bucket = self.egress.setdefault("by_model", {}).setdefault(
+                model, {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+            )
+            for field in bucket:
+                bucket[field] += int(counts.get(field, 0))
 
     @staticmethod
     def _normalise_move(index: int, raw: Mapping[str, Any], sku_by_id: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
@@ -589,9 +595,20 @@ class ShowcaseController:
         delegations = len(self.run_state.get("delegations") or []) if live else 0
         rounds = len(self.run_state.get("rounds") or []) if live else 0
 
-        calls = self.egress["calls"] + int(usage.get("calls", 0))
-        prompt_tokens = self.egress["prompt_tokens"] + int(usage.get("prompt_tokens", 0))
-        completion_tokens = self.egress["completion_tokens"] + int(usage.get("completion_tokens", 0))
+        specialist_model = self.config.nim_subagent_model or self.config.nim_model
+        by_model = self._egress_by_model(usage)
+        sup = by_model.get(self.config.nim_supervisor_model, {})
+        spec = by_model.get(specialist_model, {})
+        # Anything the provider labelled with neither model still left this
+        # process, so it is counted rather than quietly dropped.
+        other = {
+            "calls": sum(v["calls"] for k, v in by_model.items() if k not in (self.config.nim_supervisor_model, specialist_model)),
+            "prompt_tokens": sum(v["prompt_tokens"] for k, v in by_model.items() if k not in (self.config.nim_supervisor_model, specialist_model)),
+            "completion_tokens": sum(v["completion_tokens"] for k, v in by_model.items() if k not in (self.config.nim_supervisor_model, specialist_model)),
+        }
+        sup_calls = sup.get("calls", 0) + other["calls"]
+        sup_prompt = sup.get("prompt_tokens", 0) + other["prompt_tokens"]
+        sup_completion = sup.get("completion_tokens", 0) + other["completion_tokens"]
         specialist_calls = self.egress["delegations"] + delegations
         return {
             "models": [
@@ -599,29 +616,41 @@ class ShowcaseController:
                     "role": "orchestrator",
                     "model": self.config.nim_supervisor_model,
                     "endpoint": self.config.nim_supervisor_base_url,
-                    "calls": calls,
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
+                    "calls": sup_calls,
+                    "prompt_tokens": sup_prompt,
+                    "completion_tokens": sup_completion,
                     "harness_middleware": len(harness.get("middleware") or []),
                 },
                 {
                     "role": "specialists",
-                    "model": self.config.nim_subagent_model or self.config.nim_model,
+                    "model": specialist_model,
                     "endpoint": self.config.nim_subagent_base_url or self.config.nim_base_url,
-                    "calls": specialist_calls,
-                    # Subagents run isolated, so their usage never reaches this process.
-                    "prompt_tokens": None,
-                    "completion_tokens": None,
+                    # One delegation is several model turns, so the measured count
+                    # is used when it exists; delegations are the fallback.
+                    "calls": spec.get("calls") or specialist_calls,
+                    "delegations": specialist_calls,
+                    "prompt_tokens": spec.get("prompt_tokens") or None,
+                    "completion_tokens": spec.get("completion_tokens") or None,
                 },
             ],
             "totals": {
-                "calls": calls + specialist_calls,
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
+                "calls": sup_calls + (spec.get("calls") or specialist_calls),
+                "prompt_tokens": sup_prompt + spec.get("prompt_tokens", 0),
+                "completion_tokens": sup_completion + spec.get("completion_tokens", 0),
             },
             "solve_rounds": self.egress["solve_rounds"] + rounds,
             "commits": len(self.commit_history),
         }
+
+    def _egress_by_model(self, live_usage: Mapping[str, Any]) -> Dict[str, Dict[str, int]]:
+        """Dataset totals per model, plus whatever the running run has added."""
+        merged: Dict[str, Dict[str, int]] = {}
+        for source in (self.egress.get("by_model") or {}, live_usage.get("by_model") or {}):
+            for model, counts in source.items():
+                bucket = merged.setdefault(model, {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0})
+                for field in bucket:
+                    bucket[field] += int(counts.get(field, 0))
+        return merged
 
     def resolve_request(self, request_id: str, approve: bool, scope: str = "call") -> Dict[str, Any]:
         action = "approve" if approve else "deny"

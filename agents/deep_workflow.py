@@ -21,6 +21,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.tools import tool
 
 from agents.digest import warehouse_digest
@@ -92,6 +93,27 @@ Judgement rules:
 """
 
 
+class _UsageRecorder(BaseCallbackHandler):
+    """Reports every model answer, including ones nested inside a tool call."""
+
+    def __init__(self, record: Callable[[str, int, int], None]) -> None:
+        self._record = record
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        for generations in getattr(response, "generations", None) or []:
+            for generation in generations:
+                message = getattr(generation, "message", None)
+                usage = getattr(message, "usage_metadata", None)
+                if not usage:
+                    continue
+                meta = getattr(message, "response_metadata", None) or {}
+                self._record(
+                    str(meta.get("model_name") or meta.get("model") or "unknown"),
+                    int(usage.get("input_tokens", 0) or 0),
+                    int(usage.get("output_tokens", 0) or 0),
+                )
+
+
 class WarehouseDeepAgent:
     """Builds and runs the orchestrator. One instance per process; runs are serialised."""
 
@@ -113,6 +135,7 @@ class WarehouseDeepAgent:
         self.approvals = ApprovalWorkflow(self.config.approval_store)
         self.cuopt = CuOptClient(self.config) if self.config.cuopt_url else None
         self._lock = threading.Lock()
+        self._usage_lock = threading.Lock()
         self._run: Dict[str, Any] = {}
 
     # ------------------------------------------------------------------ events
@@ -120,6 +143,25 @@ class WarehouseDeepAgent:
     def _emit(self, kind: str, payload: Dict[str, Any]) -> None:
         if self.on_event:
             self.on_event(kind, payload)
+
+    def _record_usage(self, model: str, prompt: int, completion: int) -> None:
+        """One place for token accounting; subagent turns arrive on another thread."""
+        with self._usage_lock:
+            totals = self._run.setdefault(
+                "usage", {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "by_model": {}}
+            )
+            totals["calls"] += 1
+            totals["prompt_tokens"] += prompt
+            totals["completion_tokens"] += completion
+            bucket = totals.setdefault("by_model", {}).setdefault(
+                model, {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+            )
+            bucket["calls"] += 1
+            bucket["prompt_tokens"] += prompt
+            bucket["completion_tokens"] += completion
+            snapshot = json.loads(json.dumps(totals))
+        # Egress is worth watching while it happens, not only once it is over.
+        self._emit("usage", snapshot)
 
     def _guard(self, stage: str, payload: Mapping[str, Any]) -> None:
         """Guardrails are a gate, not an annotation: a block stops the run."""
@@ -432,7 +474,9 @@ class WarehouseDeepAgent:
         from deepagents import create_deep_agent
 
         supervisor = supervisor_model(self.config)
-        specialist = specialist_model(self.config)
+        # A subagent answers inside a tool call, so its turns never appear in the
+        # stream run() reads; a callback is the only place to see their tokens.
+        specialist = specialist_model(self.config, callbacks=[_UsageRecorder(self._record_usage)])
         prompt = ORCHESTRATOR_PROMPT.format(
             site=site,
             goal=goal,
@@ -507,12 +551,12 @@ class WarehouseDeepAgent:
 
         usage = getattr(message, "usage_metadata", None)
         if usage:
-            totals = self._run.setdefault("usage", {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0})
-            totals["calls"] += 1
-            totals["prompt_tokens"] += int(usage.get("input_tokens", 0) or 0)
-            totals["completion_tokens"] += int(usage.get("output_tokens", 0) or 0)
-            # Egress is worth watching while it happens, not only once it is over.
-            self._emit("usage", dict(totals))
+            meta = getattr(message, "response_metadata", None) or {}
+            self._record_usage(
+                str(meta.get("model_name") or meta.get("model") or "unknown"),
+                int(usage.get("input_tokens", 0) or 0),
+                int(usage.get("output_tokens", 0) or 0),
+            )
 
         if calls:
             if reasoning or content.strip():

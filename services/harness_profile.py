@@ -160,7 +160,7 @@ def supervisor_model(config: ProductionConfig | None = None) -> "ChatNVIDIA":
     )
 
 
-def specialist_model(config: ProductionConfig | None = None, max_tokens: int = SPECIALIST_MAX_TOKENS) -> "ChatNVIDIA":
+def specialist_model(config: ProductionConfig | None = None, max_tokens: int = SPECIALIST_MAX_TOKENS, callbacks=None) -> "ChatNVIDIA":
     """Nemotron 3.5 Lightning, hosted, for the specialist subagents."""
     from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
@@ -180,6 +180,7 @@ def specialist_model(config: ProductionConfig | None = None, max_tokens: int = S
         temperature=0.2,
         max_tokens=max_tokens,
         timeout=REQUEST_TIMEOUT_SECONDS,
+        callbacks=callbacks,
     )
 
 
