@@ -39,21 +39,63 @@ python -m unittest discover -s tests
 
 ## 2. Frame the problem (Cockpit)
 
-Land on **Cockpit**. Three things are on screen, all live:
+Use this section to tell the warehouse story before you show the agent. The
+problem is simple to state but hard to solve: the warehouse has demand moving
+faster than the slotting, so the right items are too deep in the building, some
+stock is locked into the wrong zone, and the business loses time on every pick.
 
-- **Demand signal** (left rail) — the promoted line with the largest forecast impact,
-  its 14-day forecast sparkline with promotion days marked, and the top movers by
-  forecast picks per day.
-- **Warehouse map** (centre) — every real slot in the building, one rectangle each,
-  coloured by ABC class, with the dispatch dock and the golden zone marked.
+Before you frame the problem, give the audience the mental model of the cockpit:
+
+- **New dataset** — clicking **New dataset** regenerates the whole warehouse from a
+  seed. The mock service builds a new SKU master, warehouse layout, stock
+  occupancy, inventory snapshot, and 14-day forecast. The seed can be fixed for a
+  repeatable demo, or randomised for a fresh warehouse each time. The layout is
+  still realistic: fast movers sit too far from the pick face, some slots are
+  blocked, and chilled stock is kept in chilled zones.
+- **Warehouse today** — this is the measured state of the building right now:
+  picker travel, distance per pick, daily picks, forward-pick coverage, slot
+  utilisation, blocked slots, and lines below reorder point. It is pure snapshot
+  data, not a target or a forecast.
+- **ABC class** — the class on each SKU is pre-assigned in the synthetic SKU
+  master using a Pareto-style mix: **A** = fastest-moving lines that should live
+  closest to the pick face, **B** = medium movers that belong in the mid-zone,
+  **C** = slow movers that can sit deeper in reserve. In the demo data the split
+  is intentionally skewed toward C lines, with a smaller but critical A segment.
+- **Demand signal** — the left rail highlights the promoted line with the largest
+  forecast uplift over the 14-day horizon, shows its forecast sparkline, and
+  lists the top movers by forecast picks per day. The headline is chosen from the
+  forecast data, not from a hand-written script.
+- **Slotting vs demand** — the cockpit flags the gaps the plan can actually fix:
+  fast movers far from the pick face, low forward-pick coverage, and slots that
+  are available for relocation. It also marks what is *not* addressable by
+  slotting, such as blocked slots, cold-chain locks, or lines below reorder point.
+  Those items stay visible so the audience sees the boundary of the solution.
+- **Golden zone** — the golden zone is the forward pick face, the closest and
+  fastest-to-pick slots in the warehouse. In this demo it is zone A / zone 1, the
+  area where class-A stock should be concentrated to reduce travel.
+- **Forward pick coverage** — this is the share of class-A demand already stored
+  in the forward pick zone. If class-A lines are sitting in reserve, coverage is
+  low; if they are in the golden zone, coverage rises. The KPI tells you how well
+  the warehouse is aligned to demand.
+
+### How to narrate the cockpit
+
+Land on **Cockpit** and connect the visuals to the story:
+
+- **Demand signal** (left rail) — the promoted line with the largest forecast
+  impact, its 14-day forecast sparkline with promotion days marked, and the top
+  movers by forecast picks per day.
+- **Warehouse map** (centre) — every real slot in the building, one rectangle
+  each, coloured by ABC class, with the dispatch dock and the golden zone marked.
 - **Warehouse today** (right rail) — picker travel, distance per pick, class-A
   coverage of the forward pick face, and forecast picks per day.
 
 Suggested narration:
 
-> This is a live distribution centre. The highest-demand line is on promotion and
-> sitting tens of metres from the pick face. Class-A coverage of the forward pick
-> zone is under ten percent — nearly every fast pick is a long walk into reserve.
+> This is a live distribution centre. Demand is pulling forward, but the layout
+> is still pushing fast movers deep into reserve. The result is extra travel on
+> every pick, lower forward-pick coverage, and slotting that no longer matches
+> the shape of demand.
 
 Point at **Slotting vs demand**. Note that some findings are flagged as not
 addressable by slotting — lines below reorder point and slots blocked for

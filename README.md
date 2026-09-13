@@ -4,7 +4,7 @@ Production-oriented integration scaffold for a warehouse DeepAgent workflow. Rea
 
 ## WarehouseIQ Operator UI
 
-WarehouseIQ is a four-screen operator console: a **Cockpit** with the live demand signal, a slot-level warehouse map and Nemotron's reading of the slotting gaps, a **Move Plan** with the constraint rail, the WMS-ready move manifest and the audit of everything already written, a **DeepAgent Run** showing the orchestrator, its specialists and each cuOpt solve round as they happen, and the **OpenShell** governance console.
+WarehouseIQ is a five-screen operator console: a **Cockpit** with the live demand signal, a slot-level warehouse map and Nemotron's reading of the slotting gaps, a **Move Plan** with the constraint rail, the WMS-ready move manifest and the audit of everything already written, a **DeepAgent Run** showing the orchestrator, its specialists and each cuOpt solve round as they happen, an **Executive Dashboard** with the weighted agent scorecard, and the **OpenShell** governance console.
 
 ### Running it on the cluster
 
@@ -85,6 +85,7 @@ calls and strips stray reasoning tags.
 - `services/openshell/governor.py`: the egress governor: policy, grants, approvals, audit
 - `tools/evaluation.py`: Agent quality, latency, errors, and trace recording
 - `tools/evaluation_suite.py`: Evaluation entry point for all agents
+- `showcase/evaluation.py`: Weighted executive scorecard for DeepAgent runs
 - `tools/governance.py`: OpenShell-style permissions and human approvals
 - `tools/harness.py`: Hard constraints and regression cases
 - `production_main.py`: Planning and approval-gated write-back CLI
@@ -93,7 +94,7 @@ calls and strips stray reasoning tags.
 - `showcase/analysis.py`: Nemotron's reading of the measured slotting gaps
 - `showcase/kpis.py`: the measured KPIs and the slotting headroom arithmetic
 - `showcase/demand.py`: Forecast-derived pick rates and promotion signal
-- `web/`: React + Vite operator UI (Cockpit, Move Plan, DeepAgent Run, OpenShell)
+- `web/`: React + Vite operator UI (Cockpit, Move Plan, DeepAgent Run, Executive Dashboard, OpenShell)
 - `deploy/`: cluster bring-up, port forwarding, and per-service diagnostics
 - `mocks/enterprise_services.py`: Synthetic WMS, ERP, and forecast services only
 - `tests/test_production.py`: Offline governance and regression tests

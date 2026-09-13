@@ -173,16 +173,22 @@ export default function WorkflowScreen() {
                 <section className="da__row">
                     <h2 className="da__colhead">
                         cuOpt solve rounds <span className="da__count">{rounds.length}</span>
-                        {run.status === 'COMPLETE' &&
-                            (chosen ? (
-                                <Link className="da__cta" to="/plan">
-                                    Review move manifest <ArrowRight size={13} />
+                        {run.status === 'COMPLETE' && (
+                            <div className="da__ctaGroup">
+                                {chosen ? (
+                                    <Link className="da__cta" to="/plan">
+                                        Review move manifest <ArrowRight size={13} />
+                                    </Link>
+                                ) : (
+                                    <Link className="da__cta da__cta--quiet" to="/cockpit">
+                                        Back to cockpit <ArrowRight size={13} />
+                                    </Link>
+                                )}
+                                <Link className="da__cta da__cta--quiet" to="/evaluation">
+                                    Executive dashboard <ArrowRight size={13} />
                                 </Link>
-                            ) : (
-                                <Link className="da__cta da__cta--quiet" to="/cockpit">
-                                    Back to cockpit <ArrowRight size={13} />
-                                </Link>
-                            ))}
+                            </div>
+                        )}
                     </h2>
                     <div className="da__strip">
                         {rounds.length === 0 && <p className="da__empty">The solver has not run yet.</p>}

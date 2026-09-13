@@ -31,3 +31,5 @@ web/*.tsbuildinfo
 
 # Scratch file for multi-line commit messages
 .commitmsg
+
+.idea/

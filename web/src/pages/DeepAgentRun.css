@@ -529,6 +529,15 @@
     color: var(--text-primary);
 }
 
+.da__ctaGroup {
+    order: 1;
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+}
+
 .da__count {
     font-family: var(--mono);
     font-size: 10px;
