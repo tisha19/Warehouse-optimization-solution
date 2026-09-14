@@ -65,15 +65,25 @@ fi
 CUOPT_IMAGE=${CUOPT_IMAGE:-nvcr.io/nvidia/cuopt/cuopt:26.8.0-cu13}
 GUARDRAILS_IMAGE=${GUARDRAILS_IMAGE:-nvcr.io/nvidia/nemo-microservices/guardrails:25.12}
 
-# GPUs are addressed by UUID rather than by index. The node ships a stale CDI
-# spec that bind-mounts /run/nvidia-persistenced/socket, which no longer
-# exists, so both --gpus and --device nvidia.com/gpu=N fail to create the
-# container; --runtime=nvidia with NVIDIA_VISIBLE_DEVICES takes the legacy path
-# that tolerates the missing socket. UUIDs also remove any doubt about whether
-# an index refers to our allocation or to a GPU held by another job.
+# GPUs are addressed by UUID rather than by index, so the GPU we ask for is
+# always one this job was allocated rather than one held by another job.
 mapfile -t GPU_UUIDS < <(nvidia-smi --query-gpu=uuid --format=csv,noheader 2>/dev/null)
 [ "${#GPU_UUIDS[@]}" -ge 1 ] || { echo "no GPUs visible to this job" >&2; exit 1; }
 CUOPT_GPUS=${CUOPT_GPUS:-${GPU_UUIDS[0]}}
+
+# --runtime=nvidia is preferred because some nodes ship a stale CDI spec that
+# bind-mounts /run/nvidia-persistenced/socket, which no longer exists; --gpus
+# reads that spec and fails to create the container, while the legacy runtime
+# path tolerates the missing socket. Rootless setups that never registered the
+# runtime have no such spec, so --gpus is the right fallback there.
+CUOPT_GPU_ARGS=()
+if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then
+  CUOPT_GPU_ARGS=(--runtime=nvidia -e NVIDIA_VISIBLE_DEVICES="$CUOPT_GPUS" -e NVIDIA_DRIVER_CAPABILITIES=compute,utility)
+  echo "[gpu]   launch mode: --runtime=nvidia"
+else
+  CUOPT_GPU_ARGS=(--gpus "device=${CUOPT_GPUS}")
+  echo "[gpu]   launch mode: --gpus device=<uuid>"
+fi
 
 CUOPT_PORT=${CUOPT_PORT:-25000}
 ADAPTER_PORT=${ADAPTER_PORT:-28002}
@@ -118,8 +128,7 @@ log "node $(hostname) | job ${SLURM_JOB_ID:-interactive} | models hosted by NVID
 log "cuOpt solver"
 if ! skip_if_up "http://127.0.0.1:${CUOPT_PORT}/cuopt/health" "cuOpt"; then
   docker rm -f warehouse-cuopt >/dev/null 2>&1
-  docker run -d --name warehouse-cuopt --runtime=nvidia \
-    -e NVIDIA_VISIBLE_DEVICES="$CUOPT_GPUS" -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+  docker run -d --name warehouse-cuopt "${CUOPT_GPU_ARGS[@]}" \
     --shm-size=8g -p ${CUOPT_PORT}:5000 "$CUOPT_IMAGE" >/dev/null
   wait_http "http://127.0.0.1:${CUOPT_PORT}/cuopt/health" 300 "cuOpt"
 fi
