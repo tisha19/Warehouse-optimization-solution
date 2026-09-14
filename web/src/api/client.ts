@@ -184,6 +184,34 @@ export type SolveSummary = {
     move_count: number
 }
 
+export type EvaluationMetric = {
+    label: string
+    value: number | string | null
+    unit: string
+    score: number
+    note: string
+}
+
+export type EvaluationCategory = {
+    key: string
+    label: string
+    weight: number
+    score: number
+    metrics: EvaluationMetric[]
+}
+
+export type EvaluationScorecard = {
+    status: RunStatus | 'FAILED'
+    run_id: string | null
+    generated_at: string
+    overall_score: number
+    weights: { key: string; label: string; weight: number }[]
+    categories: EvaluationCategory[]
+    summary: string
+    strongest_category: string
+    weakest_category: string
+}
+
 export type Run = {
     id: string | null
     status: RunStatus
@@ -202,6 +230,7 @@ export type Run = {
     halted_on: { service: string; reason: string } | null
     started_at: string | null
     finished_at: string | null
+    evaluation: EvaluationScorecard | null
     decisions: Record<string, 'pending' | 'approved' | 'rejected'>
     constraints: Constraints
     goal: string

@@ -38,6 +38,10 @@ function benefit(round: SolveRound): number {
     return Math.max(0, round.headroom_before.headroom_metre_picks - round.headroom_after.headroom_metre_picks)
 }
 
+function formatLog(entry: string): string {
+    return entry.trim()
+}
+
 export default function WorkflowScreen() {
     const { run, refreshOpenShell } = useLive()
 
@@ -58,12 +62,18 @@ export default function WorkflowScreen() {
         : '0.0'
     const specialists = withAttempts(delegations)
     const chosen = rounds.find((r) => r.round === run.chosen_round)
-    const latestThought = orchestrator.thinking[orchestrator.thinking.length - 1] ?? ''
+    const orchestratorLogs = orchestrator.thinking.filter((entry) => entry.trim().length > 0)
     const bestBenefit = Math.max(1, ...rounds.map(benefit))
     // A solver that errored on every attempt says nothing about the layout, so
     // the two outcomes must not be reported the same way.
     const failedRounds = rounds.filter((r) => r.status === 'failed')
     const solverFailed = rounds.length > 0 && failedRounds.length === rounds.length
+    const specialistChain = specialists.map((item, index) => ({
+        ...item,
+        index,
+        source: index === 0 ? 'Orchestrator' : label(specialists[index - 1].name),
+        target: label(item.name),
+    }))
 
     return (
         <div className="app-body layout-full da">
@@ -137,52 +147,99 @@ export default function WorkflowScreen() {
                     </ul>
                 )}
 
-                {orchestrator.status === 'running' && latestThought && (
-                    <p className="da__thought">{latestThought}</p>
-                )}
-
-                {orchestrator.narrative && <div className="da__narrative">{orchestrator.narrative}</div>}
             </section>
 
-            <div className="da__grid">
-                <section className="da__row">
-                    <h2 className="da__colhead">
-                        Delegated to specialists <span className="da__count">{specialists.length}</span>
-                    </h2>
-                    <div className="da__strip">
-                        {specialists.length === 0 && <p className="da__empty">Nothing delegated yet.</p>}
-                        {specialists.map((item) => (
-                            <article className={`da__card is-${item.status}`} key={item.id || `${item.name}-${item.attempt}`}>
-                                <header>
-                                    <span className="da__avatar">{label(item.name).charAt(0)}</span>
-                                    <strong>{label(item.name)}</strong>
-                                    {item.attempts > 1 && (
-                                        <span className="da__attempt">
-                                            {item.attempt}/{item.attempts}
-                                        </span>
-                                    )}
-                                    <span className={`da__badge da__badge--${item.status}`}>{item.status}</span>
-                                </header>
-                                <p className="da__question">{item.question}</p>
-                                {item.answer && <p className="da__answer">{item.answer}</p>}
-                            </article>
-                        ))}
-                    </div>
-                </section>
+            <div className="da__content">
+                <div className="da__split">
+                    <section className="da__lane">
+                        <h2 className="da__colhead">
+                            Orchestrator <span className="da__count">{orchestratorLogs.length}</span>
+                        </h2>
+                        <div className="da__laneBody">
+                            <p className="da__laneCopy">
+                                A running feed of every reasoning step, so earlier logs stay visible instead of being replaced.
+                            </p>
+                            <div className="da__logs da__logs--tall" role="log" aria-live="polite" aria-relevant="additions text">
+                                {orchestratorLogs.length === 0 && <p className="da__empty da__empty--compact">No reasoning logs yet.</p>}
+                                {orchestratorLogs.map((entry, index) => (
+                                    <div className="da__log" key={`${index}-${entry}`}>
+                                        <span className="da__logno">L{index + 1}</span>
+                                        <p>{formatLog(entry)}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </section>
 
-                <section className="da__row">
+                    <section className="da__lane">
+                        <h2 className="da__colhead">
+                            Delegated specialists <span className="da__count">{specialists.length}</span>
+                        </h2>
+                        <div className="da__laneBody da__laneBody--graph">
+                            <p className="da__laneCopy">
+                                Each specialist sits on a graph node, showing the handoff from the orchestrator and the answer returned.
+                            </p>
+                            <div className="da__graph">
+                                {specialistChain.length === 0 && <p className="da__empty">Nothing delegated yet.</p>}
+                                {specialistChain.map((item) => (
+                                    <article className={`da__node is-${item.status}`} key={item.id || `${item.name}-${item.attempt}`}>
+                                        <div className="da__nodeRail">
+                                            <span className="da__nodeDot" />
+                                            {item.index < specialistChain.length - 1 && <span className="da__nodeLine" />}
+                                        </div>
+                                        <div className="da__nodeBody">
+                                            <div className="da__nodeHead">
+                                                <div className="da__nodeTitle">
+                                                    <span className="da__avatar">{label(item.name).charAt(0)}</span>
+                                                    <div>
+                                                        <strong>{label(item.name)}</strong>
+                                                        <span>
+                                                            {item.source} → {item.target}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="da__nodeMeta">
+                                                    {item.attempts > 1 && (
+                                                        <span className="da__attempt">
+                                                            {item.attempt}/{item.attempts}
+                                                        </span>
+                                                    )}
+                                                    <span className={`da__badge da__badge--${item.status}`}>{item.status}</span>
+                                                </div>
+                                            </div>
+                                            <p className="da__question">{item.question}</p>
+                                            {item.answer ? (
+                                                <p className="da__answer">{item.answer}</p>
+                                            ) : (
+                                                <p className="da__answer da__answer--empty">Awaiting specialist response.</p>
+                                            )}
+                                        </div>
+                                    </article>
+                                ))}
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <section className="da__rounds">
                     <h2 className="da__colhead">
                         cuOpt solve rounds <span className="da__count">{rounds.length}</span>
-                        {run.status === 'COMPLETE' &&
-                            (chosen ? (
-                                <Link className="da__cta" to="/plan">
-                                    Review move manifest <ArrowRight size={13} />
+                        {run.status === 'COMPLETE' && (
+                            <div className="da__ctaGroup">
+                                {chosen ? (
+                                    <Link className="da__cta" to="/plan">
+                                        Review move manifest <ArrowRight size={13} />
+                                    </Link>
+                                ) : (
+                                    <Link className="da__cta da__cta--quiet" to="/cockpit">
+                                        Back to cockpit <ArrowRight size={13} />
+                                    </Link>
+                                )}
+                                <Link className="da__cta da__cta--quiet" to="/evaluation">
+                                    Executive dashboard <ArrowRight size={13} />
                                 </Link>
-                            ) : (
-                                <Link className="da__cta da__cta--quiet" to="/cockpit">
-                                    Back to cockpit <ArrowRight size={13} />
-                                </Link>
-                            ))}
+                            </div>
+                        )}
                     </h2>
                     <div className="da__strip">
                         {rounds.length === 0 && <p className="da__empty">The solver has not run yet.</p>}
