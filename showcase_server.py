@@ -13,8 +13,6 @@ from showcase.controller import ShowcaseController
 ROOT = Path(__file__).parent
 WEB_DIST = ROOT / "web" / "dist"
 CONTROLLER: ShowcaseController | None = None
-# Client-side routes have to fall through to the shell document.
-APP_ROUTES = {"/", "/cockpit", "/plan", "/workflow", "/openshell"}
 
 
 class WarehouseIQHandler(SimpleHTTPRequestHandler):
@@ -41,7 +39,11 @@ class WarehouseIQHandler(SimpleHTTPRequestHandler):
         if path in routes:
             self.execute(routes[path])
             return
-        if path in APP_ROUTES:
+        # Anything that is not an API call and does not exist on disk is a
+        # client-side route, so it has to fall through to the shell document.
+        # translate_path does the sanitising, so a traversal attempt lands
+        # outside the bundle, fails the file test and gets the shell too.
+        if not path.startswith("/api/") and not Path(self.translate_path(path)).is_file():
             self.path = "/index.html"
         super().do_GET()
 
