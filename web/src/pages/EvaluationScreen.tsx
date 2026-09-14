@@ -15,6 +15,9 @@ function formatMetric(metric: EvaluationMetric): string {
     if (metric.unit === 'ms' || metric.unit === 'runs') {
         return `${Math.round(metric.value)} ${metric.unit}`
     }
+    if (Math.abs(metric.value) >= 10000) {
+        return `${Math.round(metric.value).toLocaleString('en-GB')} ${metric.unit}`.trim()
+    }
     if (Number.isInteger(metric.value)) return `${metric.value} ${metric.unit}`.trim()
     return `${metric.value.toFixed(1)} ${metric.unit}`.trim()
 }

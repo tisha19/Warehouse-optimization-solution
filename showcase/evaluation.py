@@ -242,9 +242,10 @@ def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
     )
     plan_execution_accuracy = _clamp(100.0 - (_number(summary_metrics.get("constraint_violations")) or 0.0) * 25.0) if run_complete else 0.0
 
-    plan_quality = _number(summary_metrics.get("plan_value"))
-    if plan_quality is None:
-        plan_quality = _clamp((chosen_benefit or 0.0) * 5.0) if run_complete else 0.0
+    # plan_value is the metre-picks the chosen plan removes, not a percentage,
+    # so it is reported in its own unit and scored on the benefit it captured.
+    plan_value = _number(summary_metrics.get("plan_value"))
+    plan_quality = _clamp((chosen_benefit or 0.0) * 5.0) if run_complete else 0.0
     replans_required = max(0, len(rounds) - 1)
     replanning_score = _clamp(100.0 - replans_required * 20.0) if run_complete else 0.0
     decision_optimality = 0.0 if not run_complete or best_benefit <= 0 else _clamp(chosen_benefit / best_benefit * 100.0)
@@ -303,7 +304,7 @@ def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
             "label": "Planning Quality",
             "weight": WEIGHTS["planning_quality"],
             "metrics": [
-                _metric("Planning score", _round(plan_quality), "%", _percent_score(plan_quality), "Overall quality of the chosen plan"),
+                _metric("Plan value", _round_metric_value(plan_value), "metre-picks", plan_quality, "Metre-picks the chosen plan removes"),
                 _metric("Replans required", replans_required, "runs", replanning_score, "Fewer rounds is better"),
                 _metric("Decision optimality", _round(decision_optimality), "%", _percent_score(decision_optimality), "Chosen round vs best round"),
                 _metric("Constraint satisfaction", _round(constraint_satisfaction), "%", _percent_score(constraint_satisfaction), "Violation-free execution"),
