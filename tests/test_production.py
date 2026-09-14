@@ -10,6 +10,7 @@ from mocks.enterprise_services import MockServiceState
 from services.config import ProductionConfig
 from services.nvidia import PolicyDecision
 from showcase.controller import ShowcaseController
+from showcase.evaluation import build_scorecard
 from showcase.kpis import slotting_headroom, warehouse_kpis
 from tools.evaluation import AgentCase, AgentEvaluator
 from tools.evaluation_suite import AGENT_NAMES, evaluate_all_agents
@@ -122,6 +123,98 @@ class ProductionHarnessTests(unittest.TestCase):
             controller = self._offline_controller(directory)
             with self.assertRaisesRegex(RuntimeError, "no completed plan"):
                 controller.commit()
+
+    def test_executive_scorecard_has_weighted_categories(self):
+        run = {
+            "id": "run-1",
+            "status": "COMPLETE",
+            "summary": {"metrics": {"travel_reduction_pct": 18.0, "cost_reduction_pct": 12.0, "constraint_violations": 0, "plan_value": 88.0}},
+            "orchestrator": {"duration_ms": 9200, "thinking": ["travel is the binding constraint"], "narrative": "clear plan"},
+            "rounds": [
+                {
+                    "round": 1,
+                    "status": "done",
+                    "headroom_before": {"headroom_metre_picks": 40},
+                    "headroom_after": {"headroom_metre_picks": 18},
+                }
+            ],
+            "chosen_round": 1,
+            "moves": [{"labor_minutes": 24}],
+            "constraints": {"labour_minutes_per_window": 240, "max_moves": 30},
+            "usage": {"prompt_tokens": 1200, "completion_tokens": 300},
+            "openshell": [],
+            "validation": {"status": "PASSED"},
+            "error": None,
+        }
+
+        scorecard = build_scorecard(run)
+
+        self.assertEqual(len(scorecard["categories"]), 6)
+        self.assertEqual(sum(item["weight"] for item in scorecard["weights"]), 100)
+        self.assertGreaterEqual(scorecard["overall_score"], 0)
+        self.assertLessEqual(scorecard["overall_score"], 100)
+        business_metrics = next(category for category in scorecard["categories"] if category["key"] == "business_impact")["metrics"]
+        efficiency_metrics = next(category for category in scorecard["categories"] if category["key"] == "efficiency")["metrics"]
+        resource_metric = next(metric for metric in business_metrics if metric["label"] == "Resource utilization")
+        self.assertIsNotNone(resource_metric["value"])
+        self.assertGreater(resource_metric["value"], 0)
+        self.assertNotIn("Resource utilization", [metric["label"] for metric in efficiency_metrics])
+        sla_metric = next(metric for metric in business_metrics if metric["label"] == "SLA adherence")
+        inventory_metric = next(metric for metric in business_metrics if metric["label"] == "Inventory accuracy")
+        self.assertLess(sla_metric["value"], 100)
+        self.assertLess(inventory_metric["value"], 100)
+        latency_metric = next(metric for metric in efficiency_metrics if metric["label"] == "Latency")
+        token_metric = next(metric for metric in efficiency_metrics if metric["label"] == "Token consumption")
+        self.assertGreaterEqual(latency_metric["score"], 90)
+        self.assertGreaterEqual(token_metric["score"], 90)
+
+    def test_completed_run_persists_evaluation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = self._offline_controller(directory)
+
+            class CompletedWorkflow:
+                def __init__(self) -> None:
+                    self.approvals = controller.workflow.approvals
+                    self.openshell = SimpleNamespace(authorize=lambda *_args, **_kwargs: PolicyDecision(True, "granted in test", "test"))
+
+                def run(self, *_args, **_kwargs):
+                    return {
+                        "chosen": {
+                            "round": 1,
+                            "moves": [{"sku_id": "SKU1", "from_slot": "A001", "to_slot": "A002", "labor_minutes": 24}],
+                            "solution": {
+                                "headline": "Reduce travel",
+                                "explanation": "The forward pick face is too far from demand.",
+                                "metrics": {"travel_reduction_pct": 18.0, "cost_reduction_pct": 12.0, "constraint_violations": 0, "plan_value": 88.0},
+                            },
+                        },
+                        "rounds": [
+                            {
+                                "round": 1,
+                                "max_moves": 5,
+                                "time_limit_s": 60,
+                                "solver_seconds": 11.2,
+                                "moves": [{"sku_id": "SKU1", "from_slot": "A001", "to_slot": "A002", "labor_minutes": 24}],
+                                "kpis_before": {"avg_distance_per_pick_m": 12.0, "forward_pick_coverage_pct": 62.0, "daily_travel_km": 80.0},
+                                "kpis_after": {"avg_distance_per_pick_m": 9.8, "forward_pick_coverage_pct": 70.0, "daily_travel_km": 66.0},
+                                "headroom_before": {"headroom_metre_picks": 40},
+                                "headroom_after": {"headroom_metre_picks": 18},
+                            }
+                        ],
+                        "harness": {"attached": True, "middleware": [], "prompt_suffix_chars": 0},
+                        "narrative": "clear plan",
+                        "usage": {"calls": 3, "prompt_tokens": 1200, "completion_tokens": 300, "by_model": {}},
+                        "approval": {"approval_id": "APR-1", "status": "PENDING"},
+                        "validation": {"status": "PASSED"},
+                    }
+
+            controller.workflow = CompletedWorkflow()
+            controller._execute()
+            run = controller.run()
+
+        self.assertEqual(run["status"], "COMPLETE")
+        self.assertIsNotNone(run["evaluation"])
+        self.assertIn(run["evaluation"]["strongest_category"], {item["key"] for item in run["evaluation"]["categories"]})
 
 
 if __name__ == "__main__":

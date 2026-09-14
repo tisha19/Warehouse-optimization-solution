@@ -7,6 +7,7 @@ const NAV = [
     { label: 'Cockpit', to: '/cockpit' },
     { label: 'Move Plan', to: '/plan' },
     { label: 'DeepAgent Run', to: '/workflow' },
+    { label: 'Exec Dashboard', to: '/evaluation' },
 ]
 
 export default function TopNav() {

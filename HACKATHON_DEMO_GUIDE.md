@@ -39,21 +39,63 @@ python -m unittest discover -s tests
 
 ## 2. Frame the problem (Cockpit)
 
-Land on **Cockpit**. Three things are on screen, all live:
+Use this section to tell the warehouse story before you show the agent. The
+problem is simple to state but hard to solve: the warehouse has demand moving
+faster than the slotting, so the right items are too deep in the building, some
+stock is locked into the wrong zone, and the business loses time on every pick.
 
-- **Demand signal** (left rail) — the promoted line with the largest forecast impact,
-  its 14-day forecast sparkline with promotion days marked, and the top movers by
-  forecast picks per day.
-- **Warehouse map** (centre) — every real slot in the building, one rectangle each,
-  coloured by ABC class, with the dispatch dock and the golden zone marked.
+Before you frame the problem, give the audience the mental model of the cockpit:
+
+- **New dataset** — clicking **New dataset** regenerates the whole warehouse from a
+  seed. The mock service builds a new SKU master, warehouse layout, stock
+  occupancy, inventory snapshot, and 14-day forecast. The seed can be fixed for a
+  repeatable demo, or randomised for a fresh warehouse each time. The layout is
+  still realistic: fast movers sit too far from the pick face, some slots are
+  blocked, and chilled stock is kept in chilled zones.
+- **Warehouse today** — this is the measured state of the building right now:
+  picker travel, distance per pick, daily picks, forward-pick coverage, slot
+  utilisation, blocked slots, and lines below reorder point. It is pure snapshot
+  data, not a target or a forecast.
+- **ABC class** — the class on each SKU is pre-assigned in the synthetic SKU
+  master using a Pareto-style mix: **A** = fastest-moving lines that should live
+  closest to the pick face, **B** = medium movers that belong in the mid-zone,
+  **C** = slow movers that can sit deeper in reserve. In the demo data the split
+  is intentionally skewed toward C lines, with a smaller but critical A segment.
+- **Demand signal** — the left rail highlights the promoted line with the largest
+  forecast uplift over the 14-day horizon, shows its forecast sparkline, and
+  lists the top movers by forecast picks per day. The headline is chosen from the
+  forecast data, not from a hand-written script.
+- **Slotting vs demand** — the cockpit flags the gaps the plan can actually fix:
+  fast movers far from the pick face, low forward-pick coverage, and slots that
+  are available for relocation. It also marks what is *not* addressable by
+  slotting, such as blocked slots, cold-chain locks, or lines below reorder point.
+  Those items stay visible so the audience sees the boundary of the solution.
+- **Golden zone** — the golden zone is the forward pick face, the closest and
+  fastest-to-pick slots in the warehouse. In this demo it is zone A / zone 1, the
+  area where class-A stock should be concentrated to reduce travel.
+- **Forward pick coverage** — this is the share of class-A demand already stored
+  in the forward pick zone. If class-A lines are sitting in reserve, coverage is
+  low; if they are in the golden zone, coverage rises. The KPI tells you how well
+  the warehouse is aligned to demand.
+
+### How to narrate the cockpit
+
+Land on **Cockpit** and connect the visuals to the story:
+
+- **Demand signal** (left rail) — the promoted line with the largest forecast
+  impact, its 14-day forecast sparkline with promotion days marked, and the top
+  movers by forecast picks per day.
+- **Warehouse map** (centre) — every real slot in the building, one rectangle
+  each, coloured by ABC class, with the dispatch dock and the golden zone marked.
 - **Warehouse today** (right rail) — picker travel, distance per pick, class-A
   coverage of the forward pick face, and forecast picks per day.
 
 Suggested narration:
 
-> This is a live distribution centre. The highest-demand line is on promotion and
-> sitting tens of metres from the pick face. Class-A coverage of the forward pick
-> zone is under ten percent — nearly every fast pick is a long walk into reserve.
+> This is a live distribution centre. Demand is pulling forward, but the layout
+> is still pushing fast movers deep into reserve. The result is extra travel on
+> every pick, lower forward-pick coverage, and slotting that no longer matches
+> the shape of demand.
 
 Point at **Slotting vs demand**. Note that some findings are flagged as not
 addressable by slotting — lines below reorder point and slots blocked for
@@ -91,10 +133,164 @@ and the cuOpt solve time and model size. The event log at the bottom is the raw 
 Every privileged call in that trace was granted by the OpenShell governor. Nothing
 ran unchecked.
 
-## 5. Review the plan (Move Plan)
+## 5. Executive Dashboard
+
+Open **Executive Dashboard** to show how the run is scored after DeepAgent finishes.
+This view turns the run into a weighted scorecard so you can explain not just what the
+agent did, but how well it performed.
+
+### Overall agent score
+
+The overall score is a weighted blend of the six category scores:
+
+`Overall = 0.30 × Business Impact + 0.20 × Task Success + 0.15 × Planning Quality + 0.15 × Autonomy + 0.10 × Efficiency + 0.10 × Reliability`
+
+In the UI, each category score is computed first, and then the weighted average produces
+the final **Overall Agent Score** shown in the gauge.
+
+### What the dashboard is showing
+
+- **Overall Agent Score** — the final weighted score for the run.
+- **Category score spread** — a quick visual comparison of the six category scores.
+- **Category cards** — each card shows the category score and its sub-scores.
+- **Summary panel** — the strongest category, the weakest category, and the run status.
+
+### How category scores are calculated
+
+Each category score is the **average of its sub-scores** on a 0–100 scale. That means
+every sub-score inside a category contributes equally to that category.
+
+For example:
+- Business Impact = average of throughput improvement, cost reduction, resource utilization, cycle time reduction, SLA adherence, revenue uplift, inventory accuracy, and customer satisfaction.
+- Task Success = average of task completion, goal achievement, first-time success, and execution accuracy.
+- Planning Quality = average of planning score, replans required, decision optimality, constraint satisfaction, and root-cause identification.
+- Autonomy = average of human intervention, autonomous completion, decision confidence, and escalation rate.
+- Efficiency = average of latency, token consumption, compute cost, and response time.
+- Reliability = average of failed executions, recovery rate, hallucination rate, exception handling, and missing-data resilience.
+
+### How each sub-score is interpreted
+
+- **Higher is better** for outcome metrics like throughput, SLA adherence, accuracy, and recovery.
+- **Lower is better** for cost, latency, failed executions, intervention, and escalation.
+- **Resource utilization** is best near the target labour fit, not simply at the highest value.
+- Missing values are converted into estimated values from the run signals so the scorecard stays usable for every run.
+
+`Category Score = average(all sub-scores in that category)`
+ 
+#### Business Impact (30%)
+- Throughput improvement → from travel reduction / picks-hour uplift
+- Cost reduction → labour and travel savings mix
+- Resource utilization → how well labour budget is used
+- Cycle time reduction → per-pick travel reduction
+- SLA adherence → whether plan stayed within operating rules
+- Revenue uplift → demand flow preserved
+- Inventory accuracy → forward-pick / location quality
+- Customer satisfaction → service continuity indicator
+
+Scoring logic:
+- Percent-like metrics: higher is better, so raw % maps to score.
+- Resource utilization: best near target utilization, not simply highest.
+- Missing values fall back to estimated values from the run.
+ 
+#### Task Success (20%)
+- Task completion rate = did the run finish
+- Goal achievement rate = produced a usable plan
+- First-time success rate = completed without rework/replan
+- Plan execution accuracy = constraint-compliant output
+ 
+#### Planning Quality (15%)
+- Planning score = overall plan quality
+- Replans required = fewer is better
+- Decision optimality = chosen plan vs best available plan
+- Constraint satisfaction = zero-violation quality
+- Root cause identification = how well the bottleneck was isolated
+ 
+#### Autonomy (15%)
+- Human intervention rate = lower is better
+- Autonomous completion = finished without blocking
+- Decision confidence = certainty of chosen action
+- Escalation rate = lower is better
+ 
+#### Efficiency (10%)
+- Latency = lower is better
+- Token consumption = lower is better
+- Compute cost = blend of latency + tokens
+- Response time = lower is better
+- Resource utilization = labour fit against shift budget
+ 
+#### Reliability (10%)
+- Failed executions = lower is better
+- Recovery rate = higher is better
+- Hallucination rate = lower is better
+- Exception handling = higher is better
+- Missing-data resilience = higher is better
+
+### Why the weights are set this way
+
+| Category | Weight | Why it matters |
+|---|---:|---|
+| Business Impact | 30% | Primary business outcome; the agent exists to improve warehouse performance. |
+| Task Success | 20% | The agent must actually complete the assigned task. |
+| Planning Quality | 15% | Good planning is a core sign of agentic capability. |
+| Autonomy | 15% | Measures how independently the system operates. |
+| Efficiency | 10% | Important, but secondary to business value. |
+| Reliability | 10% | Needed for trust and repeatable use in production. |
+
+These are product weights for the demo. In a real deployment, they should be tuned
+using site priorities and historical performance.
+
+### How to explain it in the demo
+
+Say that the dashboard answers four questions:
+- Did the agent create business value?
+- Did it complete the task?
+- Did it plan well?
+- Did it do it autonomously and reliably?
+
+Then point to the category cards and explain that the final score is a weighted roll-up
+of those six views, while each category score is the average of its own sub-scores.
+
+## 6. Review the plan (Move Plan)
 
 Back on **Move Plan** the solved state shows the travel reduction, the number of
 moves, and the execution windows the moves were packed into under the labour budget.
+
+The **Execution windows** cards explain how the move plan is staged across the shift:
+
+- each window is one execution batch, here **4 windows** with **15 moves** each,
+- the UI shows the estimated **travel saved per day** from that window,
+- the **labour budget usage** shows how much of the available window capacity is consumed,
+- the shift label (for example **Low-volume shift**) shows the operating context the solver used.
+
+Use that segment to say: this is not just a static pick list; it is a time-phased plan
+that fits the labour budget while preserving the expected travel reduction.
+
+The **Optimisation objective** panel explains what the solver is trying to maximise:
+travel saved and pick efficiency, while staying within the move cap, per-window labour
+budget, slot capacity, temperature class, and locked SKU constraints.
+
+The **What the optimiser reported** panel is the proof. It shows:
+
+- the measured **travel reduction** and **replenishment reduction**,
+- **constraint violations** should stay at **0**,
+- the final **plan value** from the solver,
+- the narrative summary that explains why the plan looks like this.
+
+To validate the objective, say that the objective text must match the business goal,
+the report must show zero violations, the plan must respect all constraints, and the
+approved move list must be the same plan the solver reported.
+
+The **plan value** is the solver's objective score for that move plan. It is the number
+the optimiser uses to rank one plan against another under the same goal and constraints.
+In this demo, a higher value means the plan is better because it delivers more net
+benefit, such as travel reduction or replenishment improvement, while still staying
+inside the labour budget, move cap, slot capacity, temperature class, and locked SKU
+rules.
+
+Compare plan value only across plans that use the same objective, weights, and
+constraints. It is not an absolute business KPI. Use it to choose the better plan from
+the solver's alternatives: higher value wins, lower value loses, and a zero or negative
+value usually means the plan has little or no net gain under that formulation.
 
 Expand any move in the manifest. You get:
 
@@ -105,7 +301,7 @@ Expand any move in the manifest. You get:
 
 Approve or reject moves individually, or use **Approve all**.
 
-## 6. Demonstrate governance (OpenShell)
+## 7. Demonstrate governance (OpenShell)
 
 Press **Send to WMS**. The write does not happen. A banner reports that the call is
 **held by OpenShell** — `write_wms` is a per-call service, so every single write needs
@@ -119,20 +315,20 @@ Suggested narration:
 > The agent could not write to the warehouse system on its own authority. It asked,
 > it waited, and a human approved that specific call. Every decision is in the audit log.
 
-## 7. Show the outcome (Cockpit)
+## 8. Show the outcome (Cockpit)
 
 Return to **Cockpit**. The KPIs have moved against the recorded baseline — picker
 travel and distance per pick fall, forward-pick coverage rises, and each card shows
 the delta. The map now reflects the new slotting.
 
-## 8. Show the failure path
+## 9. Show the failure path
 
 Optionally, stop a service and re-run. The UI reports the failure and shows no plan.
 
 > There is no fallback plan and no cached result. If the optimiser cannot run, you
 > are told, rather than shown a number nobody can stand behind.
 
-## 9. Close
+## 10. Close
 
 - **Self-hosted NVIDIA stack** — Nemotron on NIM, cuOpt, and NeMo Guardrails all
   running on the cluster, not called as SaaS.
@@ -149,6 +345,7 @@ Optionally, stop a service and re-run. The UI reports the failure and shows no p
 | Cockpit — the problem | 2 |
 | Constraints | 1 |
 | DeepAgent run | 3 |
+| Executive Dashboard | 2 |
 | Plan review | 2 |
 | OpenShell approval | 2 |
 | Outcome and close | 2 |

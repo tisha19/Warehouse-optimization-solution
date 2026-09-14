@@ -27,6 +27,7 @@ from services.config import ProductionConfig
 from services.harness_profile import ANALYSIS_MAX_TOKENS, specialist_model
 from showcase.analysis import analyse_slotting
 from showcase.demand import daily_picks, demand_signal
+from showcase.evaluation import build_scorecard
 from showcase.kpis import slotting_headroom, warehouse_kpis
 
 ACTOR = "warehouse-planner"
@@ -314,7 +315,7 @@ class ShowcaseController:
     def set_constraints(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         """Planner-editable limits; the next run hands these to cuOpt."""
         if "max_moves" in payload:
-            self.constraints["max_moves"] = max(1, min(120, int(payload["max_moves"])))
+            self.constraints["max_moves"] = max(1, min(500, int(payload["max_moves"])))
         if "cold_chain_locked" in payload:
             self.constraints["cold_chain_locked"] = bool(payload["cold_chain_locked"])
         if "locked_skus" in payload:
@@ -364,6 +365,7 @@ class ShowcaseController:
             "halted_on": None,
             "started_at": None,
             "finished_at": None,
+            "evaluation": None,
         }
 
     def _set_orchestrator(self, status: str) -> None:
@@ -472,6 +474,7 @@ class ShowcaseController:
                 for record in self.run_state["rounds"]:
                     if record.get("status") == "running":
                         record["status"] = "failed"
+                self.run_state["evaluation"] = build_scorecard(self.run_state)
 
     def _finish(self, state: Mapping[str, Any]) -> None:
         chosen = dict(state.get("chosen") or {})
@@ -517,6 +520,7 @@ class ShowcaseController:
             "validation": state.get("validation"),
             "chosen_round": chosen.get("round"),
         })
+        self.run_state["evaluation"] = build_scorecard(self.run_state)
         run_usage = dict(state.get("usage") or {})
         self.egress["calls"] += int(run_usage.get("calls", 0))
         self.egress["prompt_tokens"] += int(run_usage.get("prompt_tokens", 0))
