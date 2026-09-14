@@ -8,7 +8,11 @@ function formatMetric(metric: EvaluationMetric): string {
     if (metric.value === null || metric.value === undefined) return '—'
     if (typeof metric.value === 'string') return metric.value
     if (metric.unit === '%') return `${metric.value.toFixed(1)}%`
-    if (metric.unit === 'ms' || metric.unit === 'tokens' || metric.unit === 'runs') {
+    if (metric.unit === 'tokens') {
+        if (Math.abs(metric.value) >= 1000) return `${Math.round(metric.value / 1000)}K tokens`
+        return `${Math.round(metric.value)} tokens`
+    }
+    if (metric.unit === 'ms' || metric.unit === 'runs') {
         return `${Math.round(metric.value)} ${metric.unit}`
     }
     if (Number.isInteger(metric.value)) return `${metric.value} ${metric.unit}`.trim()
@@ -19,6 +23,33 @@ function scoreClass(score: number): string {
     if (score >= 85) return 'is-good'
     if (score >= 60) return 'is-warn'
     return 'is-bad'
+}
+
+function RingGauge({ value }: { value: number }) {
+    const progress = Math.max(0, Math.min(100, value))
+    return (
+        <svg className={`ev-ring ${scoreClass(value)}`} viewBox="0 0 88 56" aria-hidden>
+            <path className="ev-ring__track" d="M 14 42 A 30 30 0 0 1 74 42" pathLength={100} />
+            <path
+                className="ev-ring__value"
+                d="M 14 42 A 30 30 0 0 1 74 42"
+                pathLength={100}
+                style={{ strokeDasharray: 100, strokeDashoffset: 100 - progress }}
+            />
+        </svg>
+    )
+}
+
+function GaugePlot({ value }: { value: number }) {
+    return (
+        <div className={`ev-gaugePlot ${scoreClass(value)}`}>
+            <RingGauge value={value} />
+            <div className="ev-gaugePlot__center">
+                <strong>{value.toFixed(1)}</strong>
+                <span>Overall Agent Score</span>
+            </div>
+        </div>
+    )
 }
 
 function CategoryCard({ category }: { category: EvaluationCategory }) {
@@ -68,9 +99,13 @@ export default function EvaluationScreen() {
                     <p>{run?.goal ?? 'Start a DeepAgent run to generate the weighted scorecard.'}</p>
                 </div>
                 <div className={`ev__gauge ${scorecard ? scoreClass(scorecard.overall_score) : 'is-warn'}`}>
-                    <Gauge size={18} />
-                    <strong>{scorecard ? scorecard.overall_score.toFixed(1) : '—'}</strong>
-                    <span>Overall Agent Score</span>
+                    {scorecard ? <GaugePlot value={scorecard.overall_score} /> : <Gauge size={18} />}
+                    {!scorecard && (
+                        <div>
+                            <strong>—</strong>
+                            <span>Overall Agent Score</span>
+                        </div>
+                    )}
                 </div>
             </header>
 
@@ -78,31 +113,43 @@ export default function EvaluationScreen() {
                 <>
                     <section className="ev__summary">
                         <article className="ev-summary">
-                            <div>
-                                <span className="ev-summary__label">Run status</span>
-                                <strong>{scorecard.status}</strong>
-                            </div>
-                            <div>
-                                <span className="ev-summary__label">Strongest category</span>
-                                <strong>{scorecard.categories.find((item) => item.key === scorecard.strongest_category)?.label ?? '—'}</strong>
-                            </div>
-                            <div>
-                                <span className="ev-summary__label">Watchlist</span>
-                                <strong>{scorecard.categories.find((item) => item.key === scorecard.weakest_category)?.label ?? '—'}</strong>
-                            </div>
                             <div className="ev-summary__copy">{scorecard.summary}</div>
+                            <div className="ev-summary__stats">
+                                <div>
+                                    <span className="ev-summary__label">Run status</span>
+                                    <strong>{scorecard.status}</strong>
+                                </div>
+                                <div>
+                                    <span className="ev-summary__label">Best</span>
+                                    <strong>{scorecard.categories.find((item) => item.key === scorecard.strongest_category)?.label ?? '—'}</strong>
+                                </div>
+                                <div>
+                                    <span className="ev-summary__label">Watchlist</span>
+                                    <strong>{scorecard.categories.find((item) => item.key === scorecard.weakest_category)?.label ?? '—'}</strong>
+                                </div>
+                            </div>
                         </article>
-                        <article className="ev-weights">
-                            {scorecard.weights.map((weight) => {
-                                const category = scorecard.categories.find((item) => item.key === weight.key)
-                                return (
-                                    <div className="ev-weight" key={weight.key}>
-                                        <span>{weight.label}</span>
-                                        <strong>{weight.weight}%</strong>
-                                        <b className={scoreClass(category?.score ?? 0)}>{(category?.score ?? 0).toFixed(1)}</b>
+                        <article className="ev-trend">
+                            <div className="ev-trend__head">
+                                <span>Category score spread</span>
+                                <span>{scorecard.categories.length} categories</span>
+                            </div>
+                            <div className="ev-spread" role="list" aria-label="Category score spread">
+                                {scorecard.categories.map((category) => (
+                                    <div className="ev-spread__item" role="listitem" key={category.key}>
+                                        <div className="ev-spread__bar">
+                                            <span
+                                                className={`ev-spread__fill ${scoreClass(category.score)}`}
+                                                style={{ height: `${Math.max(16, category.score)}%` }}
+                                            />
+                                            <div className="ev-spread__content">
+                                                <strong>{category.label}</strong>
+                                                <span>{category.score.toFixed(1)}</span>
+                                            </div>
+                                        </div>
                                     </div>
-                                )
-                            })}
+                                ))}
+                            </div>
                         </article>
                     </section>
 

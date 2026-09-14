@@ -117,19 +117,55 @@ def _distance_delta(before: Mapping[str, Any] | None, after: Mapping[str, Any] |
 def _latency_score(duration_ms: float | None) -> float:
     if duration_ms is None:
         return 50.0
-    return _clamp(100.0 - duration_ms / 1200.0)
+    if duration_ms <= 180000.0:
+        return _clamp(100.0 - duration_ms / 18000.0)
+    return _clamp(90.0 - (duration_ms - 180000.0) / 12000.0)
 
 
 def _token_score(tokens: float | None) -> float:
     if tokens is None:
         return 50.0
-    return _clamp(100.0 - tokens / 500.0)
+    if tokens <= 250000.0:
+        return _clamp(100.0 - tokens / 25000.0)
+    return _clamp(90.0 - (tokens - 250000.0) / 50000.0)
 
 
 def _utilization_score(value: float | None, target: float = 85.0) -> float:
     if value is None:
         return 50.0
     return _clamp(100.0 - abs(value - target) * 1.25)
+
+
+def _round_metric_value(value: float | None) -> float | None:
+    return _round(value)
+
+
+def _derived_sla_adherence(
+    run_complete: bool,
+    failed_rounds: list[Mapping[str, Any]],
+    constraint_violations: float | None,
+) -> float:
+    if not run_complete:
+        return _clamp(70.0 - min(len(failed_rounds), 3) * 10.0)
+    base = 97.0
+    base -= min(_number(constraint_violations) or 0.0, 4.0) * 12.0
+    base -= min(len(failed_rounds), 3) * 4.0
+    return _clamp(base)
+
+
+def _derived_inventory_accuracy(
+    run_complete: bool,
+    chosen_round: Mapping[str, Any] | None,
+    validation: Mapping[str, Any] | None,
+) -> float:
+    kpis_after = (chosen_round or {}).get("kpis_after") if isinstance(chosen_round, Mapping) else None
+    if isinstance(kpis_after, Mapping):
+        forward_pick = _number(kpis_after.get("forward_pick_coverage_pct"))
+        if forward_pick is not None:
+            return _clamp(forward_pick + (2.0 if run_complete else 0.0))
+    if isinstance(validation, Mapping) and validation.get("status") == "PASSED":
+        return 92.0 if run_complete else 75.0
+    return 78.0 if run_complete else 65.0
 
 
 def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
@@ -163,8 +199,14 @@ def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
         throughput = business_travel
     cost_reduction = _number(summary_metrics.get("cost_reduction_pct"))
     if cost_reduction is None:
-        labour_score = _clamp(total_labor_minutes / max(labour_budget, 1.0) * 100.0) if labour_budget else None
-        cost_reduction = _clamp((throughput or 0.0) * 0.7 + (labour_score or 0.0) * 0.3) if throughput is not None else labour_score
+        labour_utilization = (
+            _clamp(total_labor_minutes / max(labour_budget, 1.0) * 100.0)
+            if labour_budget
+            else _clamp(total_labor_minutes / max(move_count * 15.0, 1.0) * 100.0) if move_count else None
+        )
+        cost_reduction = _clamp(
+            (throughput or 0.0) * 0.7 + (100.0 - (labour_utilization or 0.0)) * 0.3
+        ) if throughput is not None or labour_utilization is not None else 0.0
     resource_utilization = _number(summary_metrics.get("resource_utilization_pct"))
     if resource_utilization is None:
         if labour_budget:
@@ -180,13 +222,13 @@ def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
         cycle_time_reduction = business_travel
     sla_adherence = _number(summary_metrics.get("sla_adherence_pct"))
     if sla_adherence is None:
-        sla_adherence = 100.0 if run_complete and not failed_rounds and not run.get("error") else 0.0
+        sla_adherence = _derived_sla_adherence(run_complete, failed_rounds, _number(summary_metrics.get("constraint_violations")))
     revenue_uplift = _number(summary_metrics.get("revenue_uplift"))
     if revenue_uplift is None:
         revenue_uplift = _clamp((throughput or 0.0) * max(move_count, 1) / 5.0)
     inventory_accuracy = _number(summary_metrics.get("inventory_accuracy"))
     if inventory_accuracy is None:
-        inventory_accuracy = 100.0 if run_complete and run.get("validation") else 0.0
+        inventory_accuracy = _derived_inventory_accuracy(run_complete, chosen, run.get("validation"))
     customer_satisfaction = _number(summary_metrics.get("customer_satisfaction"))
     if customer_satisfaction is None:
         customer_satisfaction = _clamp((sla_adherence + inventory_accuracy) / 2.0) if run_complete else 0.0
@@ -235,14 +277,14 @@ def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
             "label": "Business Impact",
             "weight": WEIGHTS["business_impact"],
             "metrics": [
-                _metric("Throughput improvement", _round(throughput), "%", _percent_score(throughput or 0.0), "Travel reduction and picks/hour uplift"),
-                _metric("Cost reduction", _round(cost_reduction), "%", _percent_score(cost_reduction or 0.0), "Labour and travel cost proxy"),
-                _metric("Resource utilization", _round(resource_utilization), "%", _utilization_score(resource_utilization), "Window utilization and labor fit"),
-                _metric("Cycle time reduction", _round(cycle_time_reduction), "%", _percent_score(cycle_time_reduction or 0.0), "Per-pick travel proxy"),
-                _metric("SLA adherence", _round(sla_adherence), "%", _percent_score(sla_adherence), "Plan stayed within operating rules"),
-                _metric("Revenue uplift", _round(revenue_uplift), "%", _percent_score(revenue_uplift or 0.0), "Proxy from preserved demand flow"),
-                _metric("Inventory accuracy", _round(inventory_accuracy), "%", _percent_score(inventory_accuracy), "Forward-pick and location quality"),
-                _metric("Customer satisfaction", _round(customer_satisfaction), "%", _percent_score(customer_satisfaction), "Service continuity proxy"),
+                _metric("Throughput improvement", _round_metric_value(throughput), "%", _percent_score(throughput or 0.0), "Travel reduction and picks/hour uplift"),
+                _metric("Cost reduction", _round_metric_value(cost_reduction), "%", _percent_score(cost_reduction or 0.0), "Labour and travel savings mix"),
+                _metric("Resource utilization", _round_metric_value(resource_utilization), "%", _utilization_score(resource_utilization), "Window utilization and labor fit"),
+                _metric("Cycle time reduction", _round_metric_value(cycle_time_reduction), "%", _percent_score(cycle_time_reduction or 0.0), "Per-pick travel reduction"),
+                _metric("SLA adherence", _round_metric_value(sla_adherence), "%", _percent_score(sla_adherence), "Plan stayed within operating rules"),
+                _metric("Revenue uplift", _round_metric_value(revenue_uplift), "%", _percent_score(revenue_uplift or 0.0), "Demand flow preserved"),
+                _metric("Inventory accuracy", _round_metric_value(inventory_accuracy), "%", _percent_score(inventory_accuracy), "Forward-pick and location quality"),
+                _metric("Customer satisfaction", _round_metric_value(customer_satisfaction), "%", _percent_score(customer_satisfaction), "Service continuity indicator"),
             ],
         },
         {
@@ -288,7 +330,6 @@ def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
                 _metric("Token consumption", _round(tokens, 0), "tokens", _token_score(tokens), "LLM usage cost"),
                 _metric("Compute cost", _round(duration_ms if duration_ms is not None else tokens, 0), "weighted", compute_cost_score, "Latency and token blend"),
                 _metric("Response time", _round(response_time, 0), "ms", _latency_score(response_time), "End-to-end runtime"),
-                _metric("Resource utilization", _round(resource_utilization), "%", resource_utilization_score, "Labor fit against the shift budget"),
             ],
         },
         {

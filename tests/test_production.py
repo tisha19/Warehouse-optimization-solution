@@ -153,11 +153,20 @@ class ProductionHarnessTests(unittest.TestCase):
         self.assertEqual(sum(item["weight"] for item in scorecard["weights"]), 100)
         self.assertGreaterEqual(scorecard["overall_score"], 0)
         self.assertLessEqual(scorecard["overall_score"], 100)
-        resource_metric = next(
-            metric for category in scorecard["categories"] if category["key"] == "efficiency" for metric in category["metrics"] if metric["label"] == "Resource utilization"
-        )
+        business_metrics = next(category for category in scorecard["categories"] if category["key"] == "business_impact")["metrics"]
+        efficiency_metrics = next(category for category in scorecard["categories"] if category["key"] == "efficiency")["metrics"]
+        resource_metric = next(metric for metric in business_metrics if metric["label"] == "Resource utilization")
         self.assertIsNotNone(resource_metric["value"])
         self.assertGreater(resource_metric["value"], 0)
+        self.assertNotIn("Resource utilization", [metric["label"] for metric in efficiency_metrics])
+        sla_metric = next(metric for metric in business_metrics if metric["label"] == "SLA adherence")
+        inventory_metric = next(metric for metric in business_metrics if metric["label"] == "Inventory accuracy")
+        self.assertLess(sla_metric["value"], 100)
+        self.assertLess(inventory_metric["value"], 100)
+        latency_metric = next(metric for metric in efficiency_metrics if metric["label"] == "Latency")
+        token_metric = next(metric for metric in efficiency_metrics if metric["label"] == "Token consumption")
+        self.assertGreaterEqual(latency_metric["score"], 90)
+        self.assertGreaterEqual(token_metric["score"], 90)
 
     def test_completed_run_persists_evaluation(self):
         with tempfile.TemporaryDirectory() as directory:

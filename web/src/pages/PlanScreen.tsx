@@ -38,6 +38,24 @@ const STATUS_LABEL: Record<string, string> = {
     pending: 'Awaiting Approval',
 }
 
+function tidyReportedText(value: string): string {
+    return value.replace(/\*\*/g, '').replace(/\*/g, '').replace(/\s+/g, ' ').trim()
+}
+
+function splitReportedBullets(value: string | undefined): string[] {
+    if (!value) return []
+    const cleaned = tidyReportedText(value)
+    const pipeParts = cleaned
+        .split('||')
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0)
+    if (pipeParts.length > 1) return pipeParts
+    return cleaned
+        .split(/(?<=\.)\s+(?=[A-Z])/)
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0)
+}
+
 /** Everything written to the WMS for this dataset. Generating a new warehouse clears it. */
 function CommitHistory({ commits, seed }: { commits: Commit[]; seed?: number }) {
     if (commits.length === 0) return null
@@ -99,7 +117,7 @@ export default function PlanScreen() {
         JSON.stringify(run.solved_constraints) === JSON.stringify(constraints)
     const solverAnswered = (run?.rounds ?? []).some((round) => round.status === 'done')
     const exhausted = solvedTheseConstraints && solverAnswered && run?.chosen_round === null
-    const atMaxCap = (constraints?.max_moves ?? 0) >= 120
+    const atMaxCap = (constraints?.max_moves ?? 0) >= 500
 
     useEffect(() => {
         if (!committing) return
@@ -136,6 +154,15 @@ export default function PlanScreen() {
     const totalBenefit = moves.reduce((sum, m) => sum + m.benefit_hours_per_day, 0)
     const totalLabour = moves.reduce((sum, m) => sum + m.labor_minutes, 0)
     const lockedHeadline = demand?.headline ? constraints?.locked_skus.includes(demand.headline.sku_id) : false
+    const reportedBullets = splitReportedBullets(run?.summary?.explanation)
+    const optimiserMetrics = run?.summary?.metrics ?? {}
+    const nonAddressableProblems = (dashboard?.problems ?? []).filter((problem) => !problem.addressable)
+    const metricHighlights = [
+        { label: 'Travel reduction', value: optimiserMetrics.travel_reduction_pct, unit: '%' },
+        { label: 'Replenishment reduction', value: optimiserMetrics.replenishment_reduction_pct, unit: '%' },
+        { label: 'Constraint violations', value: optimiserMetrics.constraint_violations, unit: '' },
+        { label: 'Plan value', value: optimiserMetrics.plan_value, unit: '' },
+    ].filter((item) => item.value != null)
 
     return (
         <div className="app-body layout-plan">
@@ -161,7 +188,7 @@ export default function PlanScreen() {
                             <input
                                 type="range"
                                 min={1}
-                                max={120}
+                                max={500}
                                 value={constraints?.max_moves ?? 30}
                                 onChange={(event) => void setConstraints({ max_moves: Number(event.target.value) })}
                             />
@@ -603,18 +630,48 @@ export default function PlanScreen() {
                                 <div className="block__head">
                                     <span className="block__title">What the optimiser reported</span>
                                 </div>
-                                <div className="pl-reason__item">
-                                    <span className="pl-reason__label">cuOpt</span>
-                                    <p>{run?.summary?.explanation}</p>
+                                <div className="pl-reason__hero">
+                                    <div className="pl-reason__heroHead">
+                                        <span className="pl-reason__label">cuOpt</span>
+                                        <span className="pl-reason__pill">
+                                            <BrainCircuit size={11} /> Optimiser summary
+                                        </span>
+                                    </div>
+                                    <div className="pl-reason__chips">
+                                        {metricHighlights.map((item) => (
+                                            <div className="pl-reason__chip" key={item.label}>
+                                                <span>{item.label}</span>
+                                                <b>
+                                                    {typeof item.value === 'number' ? item.value.toLocaleString() : String(item.value)}
+                                                    {item.unit}
+                                                </b>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
-                                {dashboard?.problems
-                                    .filter((problem) => !problem.addressable)
-                                    .map((problem) => (
-                                        <div className="pl-reason__item" key={problem.id}>
-                                            <span className="pl-reason__label">Not solvable by slotting</span>
-                                            <p>{problem.detail}</p>
-                                        </div>
-                                    ))}
+                                <div className="pl-reason__bullets">
+                                    {reportedBullets.length === 0 ? (
+                                        <div className="pl-reason__empty">No optimiser narrative returned.</div>
+                                    ) : (
+                                        reportedBullets.map((bullet, index) => (
+                                            <div className="pl-reason__bullet" key={`${index}-${bullet}`}>
+                                                <span className="pl-reason__bulletNo">{index + 1}</span>
+                                                <p>{bullet}</p>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                                {nonAddressableProblems.length > 0 && (
+                                    <div className="pl-reason__outcomes">
+                                        <div className="pl-reason__outcomesHead">Not solvable by slotting</div>
+                                        {nonAddressableProblems.map((problem) => (
+                                                <div className="pl-reason__item" key={problem.id}>
+                                                    <span className="pl-reason__label">{problem.title}</span>
+                                                    <p>{problem.detail}</p>
+                                                </div>
+                                            ))}
+                                    </div>
+                                )}
                             </section>
                         </div>
 

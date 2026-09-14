@@ -315,7 +315,7 @@ class ShowcaseController:
     def set_constraints(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         """Planner-editable limits; the next run hands these to cuOpt."""
         if "max_moves" in payload:
-            self.constraints["max_moves"] = max(1, min(120, int(payload["max_moves"])))
+            self.constraints["max_moves"] = max(1, min(500, int(payload["max_moves"])))
         if "cold_chain_locked" in payload:
             self.constraints["cold_chain_locked"] = bool(payload["cold_chain_locked"])
         if "locked_skus" in payload:
