@@ -12,11 +12,18 @@
 #   - cuOpt actually solves a slotting problem through the adapter
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"; cd "$REPO"
-STATE="deploy/state/stack.env"
-[ -f "$STATE" ] || { echo "no $STATE; start the stack first"; exit 1; }
+# Per-user, like every other script here: the shared stack.env belongs to
+# whoever ran this first and silently points the whole check at a dead node.
+OWNER="${STACK_OWNER:-${USER:-$(id -un)}}"
+STATE="deploy/state/stack.${OWNER}.env"
+[ -f "$STATE" ] || STATE="deploy/state/stack.env"
+[ -f "$STATE" ] || { echo "no stack state for ${OWNER}; start the stack first"; exit 1; }
 . "$STATE"
 NODE="$STACK_NODE"
-MODEL="${STACK_NIM_SERVED_MODEL:-${STACK_NIM_MODEL:-}}"
+ADAPTER_PORT="${STACK_ADAPTER_PORT:-28002}"
+GUARDRAILS_PORT="${STACK_GUARDRAILS_PORT:-28003}"
+OPENSHELL_PORT="${STACK_OPENSHELL_PORT:-28004}"
+MODEL="${STACK_SPECIALIST_MODEL:-${STACK_NIM_SERVED_MODEL:-${STACK_NIM_MODEL:-}}}"
 ACTOR="${1:-hackathon-planner}"
 PASS=0; FAIL=0
 ok(){ printf '  PASS  %s\n' "$1"; PASS=$((PASS+1)); }
@@ -39,7 +46,7 @@ for case in benign malicious; do
     want=blocked
   fi
   body=$(python3 -c 'import json,sys; print(json.dumps({"model": sys.argv[1], "messages": [{"role": "user", "content": sys.argv[2]}], "guardrails": {"config_id": "warehouse"}}))' "$MODEL" "$text")
-  resp=$(post 8003 /v1/guardrail/checks "$body")
+  resp=$(post "$GUARDRAILS_PORT" /v1/guardrail/checks "$body")
   got=$(printf '%s' "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status","?"))' 2>/dev/null)
   if [ "$got" = "$want" ]; then
     ok "$case -> $got"
@@ -51,7 +58,7 @@ done
 
 echo
 echo "openshell governor"
-gate(){ post 8004 /api/v1/gate "$(python3 -c 'import json,sys; print(json.dumps({"user": sys.argv[1], "service": sys.argv[2], "operation": "call"}))' "$ACTOR" "$1")"; }
+gate(){ post "$OPENSHELL_PORT" /api/v1/gate "$(python3 -c 'import json,sys; print(json.dumps({"user": sys.argv[1], "service": sys.argv[2], "operation": "call"}))' "$ACTOR" "$1")"; }
 decision(){ python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("decision","?"), d.get("request_id",""))' 2>/dev/null; }
 
 read -r d _ <<<"$(gate read_wms | decision)"
@@ -67,7 +74,7 @@ for service in solve_slotting create_approval llm.supervisor llm.subagent; do
     no "$service" "got ${d:-no-response} with no request id"
     continue
   fi
-  post 8004 "/api/v1/requests/$rid/approve" '{"resolved_by":"stack_verify"}' >/dev/null
+  post "$OPENSHELL_PORT" "/api/v1/requests/$rid/approve" '{"resolved_by":"stack_verify"}' >/dev/null
   read -r d _ <<<"$(gate "$service" | decision)"
   [ "$d" = allowed ] && ok "$service -> pending, approved, allowed" || no "$service" "still ${d:-no-response} after approval"
 done
@@ -100,7 +107,7 @@ print(json.dumps({
 if [ ! -s "$PROBLEM_FILE" ]; then
   no "cuopt" "could not build a slotting problem from the synthetic adapters"
 else
-  moves=$(post_file 8002 /solve/slotting "$PROBLEM_FILE" | "$PY" -c 'import json,sys; print(len(json.load(sys.stdin).get("moves",[])))' 2>/dev/null)
+  moves=$(post_file "$ADAPTER_PORT" /solve/slotting "$PROBLEM_FILE" | "$PY" -c 'import json,sys; print(len(json.load(sys.stdin).get("moves",[])))' 2>/dev/null)
   if [ -n "$moves" ] && [ "$moves" != 0 ]; then
     ok "adapter solved slotting, $moves move(s)"
   else

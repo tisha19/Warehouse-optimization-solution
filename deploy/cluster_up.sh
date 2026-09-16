@@ -52,6 +52,24 @@ JSON
   echo "[boot] registered the nvidia runtime in $DOCKER_CFG"
 fi
 
+# A daemon that outlived an earlier job was started before that config existed,
+# so it offers no nvidia runtime and every cuOpt container dies on the node's
+# stale CDI spec. Recycling it is the only way to pick the runtime up.
+if docker info >/dev/null 2>&1 \
+   && ! docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"' \
+   && command -v nvidia-container-runtime >/dev/null 2>&1; then
+  echo "[boot] rootless docker has no nvidia runtime - recycling the daemon"
+  docker rm -f warehouse-guardrails warehouse-cuopt-adapter warehouse-cuopt >/dev/null 2>&1
+  if command -v stop_rootless_docker >/dev/null 2>&1; then
+    stop_rootless_docker >/dev/null 2>&1
+  else
+    pkill -f dockerd-rootless >/dev/null 2>&1
+    pkill -f rootlesskit >/dev/null 2>&1
+  fi
+  for _ in $(seq 1 30); do docker info >/dev/null 2>&1 || break; sleep 1; done
+  rm -rf "$XDG_RUNTIME_DIR/dockerd-rootless"
+fi
+
 if ! docker info >/dev/null 2>&1; then
   echo "[boot] starting rootless docker on $(hostname)"
   mkdir -p "$XDG_RUNTIME_DIR"
@@ -154,9 +172,14 @@ log "node $(hostname) | job ${SLURM_JOB_ID:-interactive} | models hosted by NVID
 log "cuOpt solver"
 if ! skip_if_up "http://127.0.0.1:${CUOPT_PORT}/cuopt/health" "cuOpt"; then
   docker rm -f warehouse-cuopt >/dev/null 2>&1
-  docker run -d --name warehouse-cuopt "${CUOPT_GPU_ARGS[@]}" \
-    --shm-size=8g -p ${CUOPT_PORT}:5000 "$CUOPT_IMAGE" >/dev/null
-  wait_http "http://127.0.0.1:${CUOPT_PORT}/cuopt/health" 300 "cuOpt"
+  # Waiting the full five minutes on a container that was never created just
+  # delays the watchdog's next attempt, so the run failure is caught here.
+  if docker run -d --name warehouse-cuopt "${CUOPT_GPU_ARGS[@]}" \
+      --shm-size=8g -p ${CUOPT_PORT}:5000 "$CUOPT_IMAGE" >/dev/null; then
+    wait_http "http://127.0.0.1:${CUOPT_PORT}/cuopt/health" 300 "cuOpt"
+  else
+    echo "  cuOpt container could not be created - not waiting for health" >&2
+  fi
 fi
 
 log "cuOpt slotting adapter"

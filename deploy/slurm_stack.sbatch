@@ -34,7 +34,9 @@ cleanup(){ echo "[stack] shutting down"
   pkill -f 'showcase_server\.py' >/dev/null 2>&1; }
 trap cleanup TERM EXIT
 
-./deploy/cluster_up.sh
+# Invoked through bash rather than directly: the checkout is shared and a lost
+# executable bit otherwise leaves the watchdog looping on Permission denied.
+bash ./deploy/cluster_up.sh
 
 # cluster_up.sh chooses the ports and records them, so the monitor reads them
 # back rather than assuming: probing the wrong port makes a healthy service look
@@ -60,7 +62,7 @@ while true; do
   done
   if [ "$missing" = 1 ]; then
     echo "[stack] containers missing at $(date -Is) - re-running cluster_up.sh"
-    ./deploy/cluster_up.sh
+    bash ./deploy/cluster_up.sh
   fi
   # cuOpt answers /cuopt/health with 200 even when its solver worker has died
   # and is silently dropping every job, so probe an actual solve instead.
