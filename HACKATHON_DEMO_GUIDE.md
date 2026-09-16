@@ -77,6 +77,22 @@ Before you frame the problem, give the audience the mental model of the cockpit:
   in the forward pick zone. If class-A lines are sitting in reserve, coverage is
   low; if they are in the golden zone, coverage rises. The KPI tells you how well
   the warehouse is aligned to demand.
+- **Note**:
+  - Metre-picks headroom is the remaining travel-reduction opportunity in a layout or plan, measured in metre-picks. 
+    It means:
+    - current metre-picks = the travel loss you have now
+    - best metre-picks = the best achievable travel loss found by the solver
+    - headroom metre-picks = the gap between current and best
+
+  So the bigger the headroom, the more improvement is still available. In simple terms: it is the unused optimization potential.
+  
+
+  - Metre-picks is a warehouse efficiency unit that combines distance and pick volume. It represents the travel burden expressed in metres per pick or the total travel effort across picks, so a lower metre-picks value means:
+    - less picker walking,
+    - better slotting,
+    - faster fulfillment 
+
+  In the demo, it is used to compare how much travel the plan saves and how much improvement is still left as headroom.
 
 ### How to narrate the cockpit
 

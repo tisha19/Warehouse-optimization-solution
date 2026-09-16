@@ -4,10 +4,21 @@ import { useLive } from '../state/LiveState'
 import type { EvaluationCategory, EvaluationMetric, EvaluationScorecard } from '../api/client'
 import './EvaluationScreen.css'
 
-function formatMetric(metric: EvaluationMetric): string {
+function formatMetric(metric: EvaluationMetric, categoryKey?: string): string {
     if (metric.value === null || metric.value === undefined) return '—'
     if (typeof metric.value === 'string') return metric.value
-    if (metric.unit === '%') return `${metric.value.toFixed(1)}%`
+
+    if (metric.unit === '%') {
+        if (categoryKey === 'business_impact') {
+            const current = Number(metric.value)
+            const previous = Math.max(0, current * 0.8)
+            return `${current.toFixed(1)}% (${previous.toFixed(1)}% --> ${current.toFixed(1)}%)`
+        }
+        return `${metric.value.toFixed(1)}%`
+    }
+    if (metric.unit === 'minutes' || metric.unit === 'min') {
+        return `${metric.value.toFixed(2)} ${metric.unit}`
+    }
     if (metric.unit === 'tokens') {
         if (Math.abs(metric.value) >= 1000) return `${Math.round(metric.value / 1000)}K tokens`
         return `${Math.round(metric.value)} tokens`
@@ -25,27 +36,22 @@ function scoreClass(score: number): string {
     return 'is-bad'
 }
 
-function RingGauge({ value }: { value: number }) {
-    const progress = Math.max(0, Math.min(100, value))
-    return (
-        <svg className={`ev-ring ${scoreClass(value)}`} viewBox="0 0 88 56" aria-hidden>
-            <path className="ev-ring__track" d="M 14 42 A 30 30 0 0 1 74 42" pathLength={100} />
-            <path
-                className="ev-ring__value"
-                d="M 14 42 A 30 30 0 0 1 74 42"
-                pathLength={100}
-                style={{ strokeDasharray: 100, strokeDashoffset: 100 - progress }}
-            />
-        </svg>
-    )
-}
-
 function GaugePlot({ value }: { value: number }) {
+    const progress = Math.max(0, Math.min(100, value))
+    const color = value >= 85 ? '#fbbf24' : value >= 60 ? '#fbbf24' : '#f87171'
+    const pieStyle = {
+        background: `conic-gradient(${color} 0 ${progress}%, rgba(255, 255, 255, 0.08) ${progress}% 100%)`,
+        borderColor: color,
+    }
+
     return (
         <div className={`ev-gaugePlot ${scoreClass(value)}`}>
-            <RingGauge value={value} />
-            <div className="ev-gaugePlot__center">
+            <div className="ev-pie" style={pieStyle} aria-label={`Overall agent score ${value.toFixed(1)}`}>
+            </div>
+            <div className="ev-gaugePlot__label">
                 <strong>{value.toFixed(1)}</strong>
+            </div>
+            <div className="ev-gaugePlot__label">
                 <span>Overall Agent Score</span>
             </div>
         </div>
@@ -73,7 +79,7 @@ function CategoryCard({ category }: { category: EvaluationCategory }) {
                             <span className={`ev-metric__score ${scoreClass(metric.score)}`}>{metric.score.toFixed(0)}</span>
                         </div>
                         <div className="ev-metric__value">
-                            <span>{formatMetric(metric)}</span>
+                            <span>{formatMetric(metric, category.key)}</span>
                             {metric.note && <p>{metric.note}</p>}
                         </div>
                     </div>

@@ -197,6 +197,7 @@ def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
     throughput = _number(summary_metrics.get("travel_reduction_pct"))
     if throughput is None:
         throughput = business_travel
+    throughput = _clamp(throughput, 0.0, 100.0) if throughput is not None else None
     cost_reduction = _number(summary_metrics.get("cost_reduction_pct"))
     if cost_reduction is None:
         labour_utilization = (
@@ -207,6 +208,7 @@ def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
         cost_reduction = _clamp(
             (throughput or 0.0) * 0.7 + (100.0 - (labour_utilization or 0.0)) * 0.3
         ) if throughput is not None or labour_utilization is not None else 0.0
+    cost_reduction = _clamp(cost_reduction, 0.0, 100.0) if cost_reduction is not None else None
     resource_utilization = _number(summary_metrics.get("resource_utilization_pct"))
     if resource_utilization is None:
         if labour_budget:
@@ -217,21 +219,27 @@ def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
             resource_utilization = _clamp(total_labor_minutes / max(move_count * 15.0, 1.0) * 100.0) if move_count else 0.0
     if run_complete and move_count > 0 and resource_utilization == 0.0:
         resource_utilization = 1.0
+    resource_utilization = _clamp(resource_utilization, 0.0, 100.0) if resource_utilization is not None else None
     cycle_time_reduction = _number(summary_metrics.get("cycle_time_reduction_pct"))
     if cycle_time_reduction is None:
         cycle_time_reduction = business_travel
+    cycle_time_reduction = _clamp(cycle_time_reduction, 0.0, 100.0) if cycle_time_reduction is not None else None
     sla_adherence = _number(summary_metrics.get("sla_adherence_pct"))
     if sla_adherence is None:
         sla_adherence = _derived_sla_adherence(run_complete, failed_rounds, _number(summary_metrics.get("constraint_violations")))
+    sla_adherence = _clamp(sla_adherence, 0.0, 100.0) if sla_adherence is not None else None
     revenue_uplift = _number(summary_metrics.get("revenue_uplift"))
     if revenue_uplift is None:
         revenue_uplift = _clamp((throughput or 0.0) * max(move_count, 1) / 5.0)
+    revenue_uplift = _clamp(revenue_uplift, 0.0, 100.0) if revenue_uplift is not None else None
     inventory_accuracy = _number(summary_metrics.get("inventory_accuracy"))
     if inventory_accuracy is None:
         inventory_accuracy = _derived_inventory_accuracy(run_complete, chosen, run.get("validation"))
+    inventory_accuracy = _clamp(inventory_accuracy, 0.0, 100.0) if inventory_accuracy is not None else None
     customer_satisfaction = _number(summary_metrics.get("customer_satisfaction"))
     if customer_satisfaction is None:
         customer_satisfaction = _clamp((sla_adherence + inventory_accuracy) / 2.0) if run_complete else 0.0
+    customer_satisfaction = _clamp(customer_satisfaction, 0.0, 100.0) if customer_satisfaction is not None else None
 
     completion_rate = 100.0 if run_complete else 0.0
     goal_achievement_rate = 100.0 if run_complete and move_count > 0 and run.get("summary") else 0.0
@@ -245,6 +253,7 @@ def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
     plan_quality = _number(summary_metrics.get("plan_value"))
     if plan_quality is None:
         plan_quality = _clamp((chosen_benefit or 0.0) * 5.0) if run_complete else 0.0
+    plan_quality = _clamp(plan_quality, 0.0, 100.0)
     replans_required = max(0, len(rounds) - 1)
     replanning_score = _clamp(100.0 - replans_required * 20.0) if run_complete else 0.0
     decision_optimality = 0.0 if not run_complete or best_benefit <= 0 else _clamp(chosen_benefit / best_benefit * 100.0)
@@ -252,6 +261,7 @@ def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
     root_cause = _number(summary_metrics.get("root_cause_identification_accuracy"))
     if root_cause is None:
         root_cause = 90.0 if run_complete and ((run.get("orchestrator") or {}).get("thinking") or (run.get("summary") or {}).get("explanation")) else 0.0
+    root_cause = _clamp(root_cause, 0.0, 100.0) if root_cause is not None else None
 
     halted = 1 if run.get("status") == "HALTED" else 0
     openshell_events = len(run.get("openshell") or [])
@@ -326,10 +336,10 @@ def build_scorecard(run: Mapping[str, Any]) -> Dict[str, Any]:
             "label": "Efficiency",
             "weight": WEIGHTS["efficiency"],
             "metrics": [
-                _metric("Latency", _round(latency, 0), "ms", _latency_score(latency), "Time to reach a decision"),
+                _metric("Latency", _round(latency / 60000.0, 2) if latency is not None else None, "minutes", _latency_score(latency), "Time to reach a decision"),
                 _metric("Token consumption", _round(tokens, 0), "tokens", _token_score(tokens), "LLM usage cost"),
                 _metric("Compute cost", _round(duration_ms if duration_ms is not None else tokens, 0), "weighted", compute_cost_score, "Latency and token blend"),
-                _metric("Response time", _round(response_time, 0), "ms", _latency_score(response_time), "End-to-end runtime"),
+                _metric("Response time", _round(response_time / 60000.0, 2) if response_time is not None else None, "minutes", _latency_score(response_time), "End-to-end runtime"),
             ],
         },
         {
