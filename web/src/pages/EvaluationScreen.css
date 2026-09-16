@@ -14,6 +14,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 14px;
+    min-height: 80px;
+    height: 80px;
 }
 
 .ev__title {
@@ -46,54 +48,75 @@
 }
 
 .ev__gauge {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: space-between;
+    width: 250px;
+    min-height: 72px;
+    height: 72px;
+    gap: 10px;
     padding: 8px 12px;
     border-radius: var(--radius-lg);
     border: 1px solid var(--border-card);
     background: var(--bg-panel);
     box-shadow: var(--shadow-card);
+    text-align: left;
+    box-sizing: border-box;
+    overflow: hidden;
 }
 
 .ev-gaugePlot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 10px;
+    flex: 1 2 auto;
+}
+
+.ev-pie {
     position: relative;
-    width: 104px;
-    height: 88px;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: 3px solid currentColor;
     display: grid;
     place-items: center;
+    box-shadow: inset 0 0 0 4px rgba(10, 16, 26, 0.18);
     flex: none;
 }
 
-.ev-gaugePlot__center {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 4px;
-    top: 30px;
+.ev-pie__inner {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: rgba(9, 15, 23, 0.15);
     display: grid;
-    align-content: end;
-    justify-items: center;
-    text-align: center;
-    pointer-events: none;
+    place-items: center;
 }
 
-.ev-gaugePlot__center strong {
+.ev-pie__inner strong {
     display: block;
-    font-size: 24px;
+    font-size: 13px;
     line-height: 1;
     color: var(--text-primary);
 }
 
-.ev-gaugePlot__center span {
+.ev-gaugePlot__label {
+    width: auto;
+    max-width: 120px;
+    text-align: center;
+}
+
+.ev-gaugePlot__label span {
     display: block;
-    margin-top: 1px;
-    max-width: 76px;
     font-size: 8px;
-    line-height: 1.1;
+    line-height: 1.2;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-muted);
+    white-space: normal;
+    word-break: break-word;
 }
 
 .ev__gauge strong {
@@ -111,29 +134,8 @@
 
 .ev__gauge div {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 2px;
-}
-
-.ev-ring {
-    width: 104px;
-    height: 56px;
-}
-
-.ev-ring__track,
-.ev-ring__value {
-    fill: none;
-    stroke-width: 8;
-}
-
-.ev-ring__track {
-    stroke: #16243d;
-}
-
-.ev-ring__value {
-    stroke-linecap: round;
-    stroke: currentColor;
-    filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.25));
 }
 
 .ev__gauge.is-good {
@@ -156,6 +158,12 @@
     grid-template-columns: 1.1fr 0.9fr;
     gap: 10px;
     min-height: 0;
+    align-items: stretch;
+}
+
+.ev-summary,
+.ev-trend {
+    min-height: 120px;
 }
 
 .ev-summary,
@@ -173,6 +181,8 @@
     display: grid;
     grid-template-rows: auto auto;
     gap: 8px;
+    max-height: 120px;
+    align-content: center;
 }
 
 .ev-summary__stats {
@@ -217,6 +227,8 @@
     border-radius: var(--radius-lg);
     background: var(--bg-panel);
     box-shadow: var(--shadow-card);
+    max-height: 120px;
+    align-content: center;
 }
 
 .ev-trend__head {
@@ -234,15 +246,21 @@
     grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
     gap: 8px;
     align-items: end;
+    height: 100%;
+    min-height: 0;
 }
 
 .ev-spread__item {
     min-width: 0;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
 }
 
 .ev-spread__bar {
     position: relative;
-    height: 110px;
+    height: 80px;
+    width: 100%;
     border-radius: var(--radius-md);
     overflow: hidden;
     border: 1px solid var(--border-subtle);
