@@ -330,8 +330,14 @@ class ShowcaseController:
         return dict(self.constraints)
 
     def service_status(self) -> List[Dict[str, Any]]:
+        # The orchestrator runs on the supervisor endpoint, so reporting nim_model here
+        # named the specialist model as the supervisor on screen.
         return [
-            {"name": "Nemotron NIM (supervisor)", "endpoint": self.config.nim_base_url, "detail": self.config.nim_model},
+            {
+                "name": "Nemotron NIM (supervisor)",
+                "endpoint": self.config.nim_supervisor_base_url or self.config.nim_base_url,
+                "detail": self.config.nim_supervisor_model or self.config.nim_model,
+            },
             {"name": "Nemotron NIM (specialists)", "endpoint": self.config.nim_subagent_base_url or self.config.nim_base_url, "detail": self.config.nim_subagent_model or self.config.nim_model},
             {"name": "NVIDIA cuOpt", "endpoint": self.config.cuopt_url, "detail": "linear assignment solver"},
             {"name": "NeMo Guardrails", "endpoint": self.config.guardrails_url, "detail": self.config.guardrails_config_id},

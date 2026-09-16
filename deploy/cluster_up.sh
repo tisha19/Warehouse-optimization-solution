@@ -31,6 +31,27 @@ export PATH="/cm/shared/apps/rootless-docker/bin:$PATH"
 USER=${USER:-$(id -un)}
 export XDG_RUNTIME_DIR="/raid/docker/tmp/xdg_runtime_dir_$(id -u)"
 export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"
+
+# The rootless daemon only offers the nvidia runtime if this per-user config
+# registers it. Without it we fall back to --gpus, which reads the node's stale
+# CDI spec, and cuOpt never starts. The daemon dies with the job, so writing
+# this before the first start is enough.
+DOCKER_CFG="$HOME/.config/docker/daemon.json"
+if [ ! -f "$DOCKER_CFG" ]; then
+  mkdir -p "$(dirname "$DOCKER_CFG")"
+  cat > "$DOCKER_CFG" <<'JSON'
+{
+    "runtimes": {
+        "nvidia": {
+            "args": [],
+            "path": "nvidia-container-runtime"
+        }
+    }
+}
+JSON
+  echo "[boot] registered the nvidia runtime in $DOCKER_CFG"
+fi
+
 if ! docker info >/dev/null 2>&1; then
   echo "[boot] starting rootless docker on $(hostname)"
   mkdir -p "$XDG_RUNTIME_DIR"
@@ -83,6 +104,11 @@ if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; t
 else
   CUOPT_GPU_ARGS=(--gpus "device=${CUOPT_GPUS}")
   echo "[gpu]   launch mode: --gpus device=<uuid>"
+  if [ ! -S /run/nvidia-persistenced/socket ]; then
+    echo "[gpu]   WARNING: nvidia runtime is not registered with this rootless daemon" >&2
+    echo "[gpu]   and the node's CDI spec wants a socket that is missing, so cuOpt" >&2
+    echo "[gpu]   will fail to start. Restart the stack so $DOCKER_CFG takes effect." >&2
+  fi
 fi
 
 CUOPT_PORT=${CUOPT_PORT:-25000}
