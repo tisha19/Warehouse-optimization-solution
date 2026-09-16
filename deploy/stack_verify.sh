@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Terminal-level verification of the self-hosted stack. Safe to run from the
-# login node: it reads the stack node out of deploy/state/stack.env and probes
-# the services over the network.
+# login node: it reads the stack node out of the owner's per-user state file
+# and probes the services over the network.
 #
 #   ./deploy/stack_verify.sh
 #
@@ -16,7 +16,6 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"; cd "$REPO"
 # whoever ran this first and silently points the whole check at a dead node.
 OWNER="${STACK_OWNER:-${USER:-$(id -un)}}"
 STATE="deploy/state/stack.${OWNER}.env"
-[ -f "$STATE" ] || STATE="deploy/state/stack.env"
 [ -f "$STATE" ] || { echo "no stack state for ${OWNER}; start the stack first"; exit 1; }
 . "$STATE"
 NODE="$STACK_NODE"

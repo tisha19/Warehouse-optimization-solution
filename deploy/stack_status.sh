@@ -3,8 +3,9 @@
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # Per-user state: the checkout is on shared storage and teammates run the same
 # stack, so the unqualified file would describe whichever of us started last.
+# There is deliberately no fallback to it: nothing writes it any more, so it
+# only ever names a node some earlier job died on.
 STATE="$REPO/deploy/state/stack.$USER.env"
-[ -f "$STATE" ] || STATE="$REPO/deploy/state/stack.env"
 echo "== slurm =="
 command -v squeue >/dev/null || export PATH="/cm/local/apps/slurm/current/bin:$PATH"
 export SLURM_CONF="${SLURM_CONF:-/cm/shared/apps/slurm/etc/slurm/slurm.conf}"
