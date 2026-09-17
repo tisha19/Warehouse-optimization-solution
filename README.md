@@ -1,4 +1,4 @@
-# AI-Driven Warehouse Slotting & Inventory Optimization Platform
+﻿# AI-Driven Warehouse Slotting & Inventory Optimization Platform
 
 Production-oriented integration scaffold for a warehouse DeepAgent workflow. Real NVIDIA and cuOpt services are required; only WMS, ERP, and forecasting endpoints have local synthetic mocks.
 
@@ -27,6 +27,7 @@ closes the tunnels:
 | Service | Local URL | Port |
 | --- | --- | --- |
 | **WarehouseIQ UI** | **http://127.0.0.1:28090** | **28090** |
+| Nemotron 3.5 Lightning NIM | http://127.0.0.1:28000 | 28000 |
 | cuOpt solver | http://127.0.0.1:25000 | 25000 |
 | cuOpt slotting adapter | http://127.0.0.1:28002 | 28002 |
 | NeMo Guardrails | http://127.0.0.1:28003 | 28003 |
@@ -47,7 +48,7 @@ cd .. && source .venv/bin/activate
 python showcase_server.py --port 28090
 ```
 
-Every number on screen comes from a live service call. WMS, ERP, and forecasting are backed by the synthetic generator in `mocks/`; NVIDIA NIM, cuOpt, NeMo Guardrails, and OpenShell are the real services. **Nothing is faked and there is no fallback path** — if a service is unreachable, the screen shows the failure instead of substituting a plan.
+Every number on screen comes from a live service call. WMS, ERP, and forecasting are backed by the synthetic generator in `mocks/`; NVIDIA NIM, cuOpt, NeMo Guardrails, and OpenShell are the real services. **Nothing is faked and there is no fallback path** â€” if a service is unreachable, the screen shows the failure instead of substituting a plan.
 
 Every model call and every read of an enterprise system is announced to the
 OpenShell governor first, including the cockpit's own assessment: revoking the
@@ -68,8 +69,9 @@ WMS / ERP / Forecast APIs
     -> agent evaluation and tracing
 ```
 
-Both models are hosted by NVIDIA at `https://inference-api.nvidia.com/v1`; the
-stack itself needs one GPU, for cuOpt. The orchestrator runs under the
+Nemotron 3 Ultra is hosted by NVIDIA at `https://inference-api.nvidia.com/v1`;
+Nemotron 3.5 Lightning runs on our own B300. The stack needs two GPUs, one for
+the NIM and one for cuOpt. The orchestrator runs under the
 deepagents Nemotron harness (13 middleware), which repairs text-shaped tool
 calls and strips stray reasoning tags.
 

@@ -59,7 +59,7 @@ if docker info >/dev/null 2>&1 \
    && ! docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"' \
    && command -v nvidia-container-runtime >/dev/null 2>&1; then
   echo "[boot] rootless docker has no nvidia runtime - recycling the daemon"
-  docker rm -f warehouse-guardrails warehouse-cuopt-adapter warehouse-cuopt >/dev/null 2>&1
+  docker rm -f warehouse-guardrails warehouse-cuopt-adapter warehouse-cuopt warehouse-nim >/dev/null 2>&1
   if command -v stop_rootless_docker >/dev/null 2>&1; then
     stop_rootless_docker >/dev/null 2>&1
   else
@@ -103,12 +103,29 @@ fi
 
 CUOPT_IMAGE=${CUOPT_IMAGE:-nvcr.io/nvidia/cuopt/cuopt:26.8.0-cu13}
 GUARDRAILS_IMAGE=${GUARDRAILS_IMAGE:-nvcr.io/nvidia/nemo-microservices/guardrails:25.12}
+# Lightning is served here rather than by NVIDIA. Set SELF_HOST_LIGHTNING=0 to
+# fall back to the hosted endpoint for both models.
+SELF_HOST_LIGHTNING=${SELF_HOST_LIGHTNING:-1}
+LIGHTNING_IMAGE=${LIGHTNING_IMAGE:-nvcr.io/nim/nvidia/nemotron-3.5-lightning-30b-a3b:latest}
+LIGHTNING_MODEL_ID=${LIGHTNING_MODEL_ID:-nvidia/nemotron-3.5-lightning-30b-a3b}
+LIGHTNING_PORT=${LIGHTNING_PORT:-28000}
+NIM_CACHE=${NIM_CACHE:-/raid/docker/tmp/nim-cache-$USER}
+NGC_KEY=$(grep -m1 -oE 'nvapi-[A-Za-z0-9_-]+' .env || true)
 
 # GPUs are addressed by UUID rather than by index, so the GPU we ask for is
 # always one this job was allocated rather than one held by another job.
 mapfile -t GPU_UUIDS < <(nvidia-smi --query-gpu=uuid --format=csv,noheader 2>/dev/null)
 [ "${#GPU_UUIDS[@]}" -ge 1 ] || { echo "no GPUs visible to this job" >&2; exit 1; }
-CUOPT_GPUS=${CUOPT_GPUS:-${GPU_UUIDS[0]}}
+# Lightning takes the first card and cuOpt the second, so neither waits on the
+# other. With a single GPU they share it, which only works for small solves.
+if [ "$SELF_HOST_LIGHTNING" = 1 ] && [ "${#GPU_UUIDS[@]}" -ge 2 ]; then
+  LIGHTNING_GPUS=${LIGHTNING_GPUS:-${GPU_UUIDS[0]}}
+  CUOPT_GPUS=${CUOPT_GPUS:-${GPU_UUIDS[1]}}
+else
+  LIGHTNING_GPUS=${LIGHTNING_GPUS:-${GPU_UUIDS[0]}}
+  CUOPT_GPUS=${CUOPT_GPUS:-${GPU_UUIDS[0]}}
+  [ "$SELF_HOST_LIGHTNING" = 1 ] && echo "[gpu]   WARNING: only ${#GPU_UUIDS[@]} GPU visible; Lightning and cuOpt will share it" >&2
+fi
 
 # --runtime=nvidia is preferred because some nodes ship a stale CDI spec that
 # bind-mounts /run/nvidia-persistenced/socket, which no longer exists; --gpus
@@ -117,10 +134,10 @@ CUOPT_GPUS=${CUOPT_GPUS:-${GPU_UUIDS[0]}}
 # runtime have no such spec, so --gpus is the right fallback there.
 CUOPT_GPU_ARGS=()
 if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then
-  CUOPT_GPU_ARGS=(--runtime=nvidia -e NVIDIA_VISIBLE_DEVICES="$CUOPT_GPUS" -e NVIDIA_DRIVER_CAPABILITIES=compute,utility)
+  GPU_MODE=runtime
   echo "[gpu]   launch mode: --runtime=nvidia"
 else
-  CUOPT_GPU_ARGS=(--gpus "device=${CUOPT_GPUS}")
+  GPU_MODE=cdi
   echo "[gpu]   launch mode: --gpus device=<uuid>"
   if [ ! -S /run/nvidia-persistenced/socket ]; then
     echo "[gpu]   WARNING: nvidia runtime is not registered with this rootless daemon" >&2
@@ -128,6 +145,15 @@ else
     echo "[gpu]   will fail to start. Restart the stack so $DOCKER_CFG takes effect." >&2
   fi
 fi
+gpu_args_for(){
+  if [ "$GPU_MODE" = runtime ]; then
+    printf '%s\n' --runtime=nvidia -e "NVIDIA_VISIBLE_DEVICES=$1" -e NVIDIA_DRIVER_CAPABILITIES=compute,utility
+  else
+    printf '%s\n' --gpus "device=$1"
+  fi
+}
+mapfile -t CUOPT_GPU_ARGS < <(gpu_args_for "$CUOPT_GPUS")
+mapfile -t LIGHTNING_GPU_ARGS < <(gpu_args_for "$LIGHTNING_GPUS")
 
 CUOPT_PORT=${CUOPT_PORT:-25000}
 ADAPTER_PORT=${ADAPTER_PORT:-28002}
@@ -155,19 +181,32 @@ wait_http(){ local u=$1 t=$2 n=$3 w=0
 # Per-user: the checkout is on shared storage and teammates run this too, so a
 # single stack.env would describe whoever started last, not us.
 STATE_FILE="deploy/state/stack.$USER.env"
+write_state(){
 cat > "$STATE_FILE" <<ENVEOF
 STACK_NODE=$(hostname)
 STACK_JOB_ID=${SLURM_JOB_ID:-interactive}
 STACK_STARTED=$(date -Is)
 STACK_SUPERVISOR_MODEL=${SUPERVISOR_MODEL}
 STACK_SPECIALIST_MODEL=${SPECIALIST_MODEL}
+STACK_SELF_HOST_LIGHTNING=${SELF_HOST_LIGHTNING}
+STACK_LIGHTNING_PORT=${LIGHTNING_PORT}
 STACK_CUOPT_PORT=${CUOPT_PORT}
 STACK_ADAPTER_PORT=${ADAPTER_PORT}
 STACK_GUARDRAILS_PORT=${GUARDRAILS_PORT}
 STACK_OPENSHELL_PORT=${OPENSHELL_PORT}
 STACK_APP_PORT=${APP_PORT}
 ENVEOF
-log "node $(hostname) | job ${SLURM_JOB_ID:-interactive} | models hosted by NVIDIA"
+}
+# Written now so the watchdog can find the ports even if the NIM load is slow,
+# and again afterwards once the served model id is known.
+write_state
+log "node $(hostname) | job ${SLURM_JOB_ID:-interactive} | orchestrator hosted by NVIDIA"
+
+# Specialists default to the hosted endpoint and are repointed once the local
+# NIM is up. Starting it after the solver keeps a slow weight load from holding
+# the rest of the stack down.
+SPECIALIST_BASE="$HOSTED_BASE"
+SPECIALIST_KEY="$HOSTED_KEY"
 
 log "cuOpt solver"
 if ! skip_if_up "http://127.0.0.1:${CUOPT_PORT}/cuopt/health" "cuOpt"; then
@@ -199,6 +238,39 @@ if ! skip_if_up "http://127.0.0.1:${OPENSHELL_PORT}/api/v1/healthz" "openshell g
   wait_http "http://127.0.0.1:${OPENSHELL_PORT}/api/v1/healthz" 120 "openshell governor"
 fi
 
+if [ "$SELF_HOST_LIGHTNING" = 1 ]; then
+  log "Nemotron 3.5 Lightning NIM on port ${LIGHTNING_PORT}"
+  mkdir -p "$NIM_CACHE" && chmod 777 "$NIM_CACHE" 2>/dev/null
+  if ! skip_if_up "http://127.0.0.1:${LIGHTNING_PORT}/v1/health/ready" "lightning NIM"; then
+    [ -n "$NGC_KEY" ] || echo "  no nvapi- key found in .env; the NIM pull will fail" >&2
+    docker rm -f warehouse-nim >/dev/null 2>&1
+    if docker run -d --name warehouse-nim "${LIGHTNING_GPU_ARGS[@]}" --shm-size=32g \
+        -e NGC_API_KEY="$NGC_KEY" -e NIM_TENSOR_PARALLEL_SIZE=1 \
+        -e NIM_REASONING_PARSER="${NIM_REASONING_PARSER:-nemotron_v3}" \
+        ${NIM_MODEL_PROFILE:+-e NIM_MODEL_PROFILE="$NIM_MODEL_PROFILE"} \
+        -v "$NIM_CACHE:/opt/nim/.cache" -p ${LIGHTNING_PORT}:8000 "$LIGHTNING_IMAGE" >/dev/null; then
+      wait_http "http://127.0.0.1:${LIGHTNING_PORT}/v1/health/ready" 5400 "lightning NIM"
+    else
+      echo "  lightning NIM container could not be created" >&2
+    fi
+  fi
+  if healthy "http://127.0.0.1:${LIGHTNING_PORT}/v1/health/ready"; then
+    # A NIM advertises its own model id, which need not match the image name, so
+    # take it from the server or the app and the rails will 404 against it.
+    SERVED_MODEL=$(curl -sf -m 10 "http://127.0.0.1:${LIGHTNING_PORT}/v1/models" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null) || SERVED_MODEL=""
+    SPECIALIST_MODEL="${SERVED_MODEL:-$LIGHTNING_MODEL_ID}"
+    SPECIALIST_BASE="http://127.0.0.1:${LIGHTNING_PORT}/v1"
+    SPECIALIST_KEY="local"
+    log "specialists served locally: ${SPECIALIST_MODEL}"
+    write_state
+  else
+    echo "lightning NIM did not become ready; specialists have nowhere to run." >&2
+    echo "Check 'docker logs warehouse-nim'. Set SELF_HOST_LIGHTNING=0 to use the hosted endpoint." >&2
+    exit 1
+  fi
+fi
+
 # The repo sits on team-shared storage and a teammate running this same script
 # rewrites .env for their own ports. Handing the URLs to our processes as real
 # environment variables, with process precedence, stops that from repointing
@@ -207,16 +279,16 @@ export WAREHOUSE_ENV_PRECEDENCE=process
 export CUOPT_URL="http://127.0.0.1:${ADAPTER_PORT}"
 export NEMO_GUARDRAILS_URL="http://127.0.0.1:${GUARDRAILS_PORT}"
 export OPENSHELL_URL="http://127.0.0.1:${OPENSHELL_PORT}"
-export NIM_BASE_URL="$HOSTED_BASE"
+export NIM_BASE_URL="$SPECIALIST_BASE"
 export NIM_MODEL="$SPECIALIST_MODEL"
-export NIM_API_KEY="$HOSTED_KEY"
-export NIM_SUBAGENT_BASE_URL="$HOSTED_BASE"
+export NIM_API_KEY="$SPECIALIST_KEY"
+export NIM_SUBAGENT_BASE_URL="$SPECIALIST_BASE"
 export NIM_SUBAGENT_MODEL="$SPECIALIST_MODEL"
 
 # The ports are chosen here, so this script is also what teaches the app where
 # everything landed; otherwise a shared-node port change silently leaves .env
 # pointing at a teammate's services.
-python3 - "$HOSTED_BASE" "$SPECIALIST_MODEL" "$HOSTED_KEY" "$ADAPTER_PORT" "$GUARDRAILS_PORT" "$OPENSHELL_PORT" <<'PYEOF'
+python3 - "$SPECIALIST_BASE" "$SPECIALIST_MODEL" "$SPECIALIST_KEY" "$ADAPTER_PORT" "$GUARDRAILS_PORT" "$OPENSHELL_PORT" <<'PYEOF'
 import pathlib, re, sys
 base, specialist, key, adapter, rails, shell = sys.argv[1:7]
 updates = {
@@ -246,8 +318,8 @@ if ! skip_if_up "http://127.0.0.1:${GUARDRAILS_PORT}/v1/health" "guardrails"; th
   docker rm -f warehouse-guardrails >/dev/null 2>&1
   docker run -d --name warehouse-guardrails --network host \
     -e GUARDRAILS_PORT=${GUARDRAILS_PORT} -e DEFAULT_LLM_PROVIDER=openai \
-    -e NIM_ENDPOINT_URL="$HOSTED_BASE" -e NVIDIA_API_KEY="$HOSTED_KEY" \
-    -e OPENAI_API_KEY="$HOSTED_KEY" -e OPENAI_BASE_URL="$HOSTED_BASE" \
+    -e NIM_ENDPOINT_URL="$SPECIALIST_BASE" -e NVIDIA_API_KEY="$SPECIALIST_KEY" \
+    -e OPENAI_API_KEY="$SPECIALIST_KEY" -e OPENAI_BASE_URL="$SPECIALIST_BASE" \
     "$GUARDRAILS_IMAGE" >/dev/null
   wait_http "http://127.0.0.1:${GUARDRAILS_PORT}/v1/health" 300 "guardrails"
 fi

@@ -33,7 +33,8 @@ STATE_FILE="deploy/state/stack.$ME.env"
 # Defaults must match cluster_up.sh; the state file overrides them once the
 # stack has started and recorded where it actually landed.
 CUOPT_PORT=25000; ADAPTER_PORT=28002; GUARDRAILS_PORT=28003
-OPENSHELL_PORT=28004; APP_PORT=28090
+OPENSHELL_PORT=28004; APP_PORT=28090; LIGHTNING_PORT=28000
+SELF_HOST_LIGHTNING=0
 if [ -f "$STATE_FILE" ]; then
   . "$STATE_FILE"
   CUOPT_PORT=${STACK_CUOPT_PORT:-$CUOPT_PORT}
@@ -41,6 +42,8 @@ if [ -f "$STATE_FILE" ]; then
   GUARDRAILS_PORT=${STACK_GUARDRAILS_PORT:-$GUARDRAILS_PORT}
   OPENSHELL_PORT=${STACK_OPENSHELL_PORT:-$OPENSHELL_PORT}
   APP_PORT=${STACK_APP_PORT:-$APP_PORT}
+  LIGHTNING_PORT=${STACK_LIGHTNING_PORT:-$LIGHTNING_PORT}
+  SELF_HOST_LIGHTNING=${STACK_SELF_HOST_LIGHTNING:-0}
 fi
 
 bold(){ printf '\033[1m%s\033[0m\n' "$*"; }
@@ -59,8 +62,8 @@ probe(){
   printf '  %-24s %-30s down (%s)\n' "$label" "$path" "${code:-000}"; return 1
 }
 
-# Both Nemotron models are hosted, so this is a credential and reachability
-# check rather than something we could start ourselves.
+# The orchestrator is hosted, so this is a credential and reachability check
+# rather than something we could start ourselves.
 hosted_probe(){
   local base key code
   base=$(env_get NIM_SUPERVISOR_BASE_URL); key=$(env_get NIM_SUPERVISOR_API_KEY)
@@ -84,14 +87,19 @@ status_report(){
   [ -z "$stack_id" ] && echo "  (no stack job)"
 
   bold ""
-  bold "== models (NVIDIA hosted) =="
-  echo "  orchestrator : $(env_get NIM_SUPERVISOR_MODEL)"
-  echo "  specialists  : $(env_get NIM_SUBAGENT_MODEL)"
+  bold "== models =="
+  echo "  orchestrator : $(env_get NIM_SUPERVISOR_MODEL) (NVIDIA hosted)"
+  if [ "$SELF_HOST_LIGHTNING" = 1 ]; then
+    echo "  specialists  : $(env_get NIM_SUBAGENT_MODEL) (self-hosted)"
+  else
+    echo "  specialists  : $(env_get NIM_SUBAGENT_MODEL) (NVIDIA hosted)"
+  fi
   hosted_probe || down=1
 
   bold ""
   bold "== application stack (job ${stack_id:-none} on ${stack_node:-?}) =="
   if [ -n "$stack_node" ]; then
+    [ "$SELF_HOST_LIGHTNING" = 1 ] && { probe "Lightning NIM" "$stack_node" "$LIGHTNING_PORT" /v1/health/ready || down=1; }
     probe "cuOpt"              "$stack_node" "$CUOPT_PORT"      /cuopt/health   || down=1
     probe "cuOpt adapter"      "$stack_node" "$ADAPTER_PORT"    /health         || down=1
     probe "NeMo Guardrails"    "$stack_node" "$GUARDRAILS_PORT" /v1/health      || down=1

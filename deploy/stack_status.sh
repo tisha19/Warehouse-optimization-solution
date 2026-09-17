@@ -14,8 +14,13 @@ squeue -u "$USER" -o "%.8i %.16j %.9T %.10M %.14R %b" 2>/dev/null || echo "  (sq
 . "$STATE"
 echo
 echo "== stack node: ${STACK_NODE} (job ${STACK_JOB_ID}, started ${STACK_STARTED}) =="
-echo "   models: ${STACK_SUPERVISOR_MODEL:-?} (orchestrator) / ${STACK_SPECIALIST_MODEL:-?} (specialists), hosted by NVIDIA"
+if [ "${STACK_SELF_HOST_LIGHTNING:-0}" = 1 ]; then
+  echo "   models: ${STACK_SUPERVISOR_MODEL:-?} (orchestrator, NVIDIA hosted) / ${STACK_SPECIALIST_MODEL:-?} (specialists, self-hosted)"
+else
+  echo "   models: ${STACK_SUPERVISOR_MODEL:-?} (orchestrator) / ${STACK_SPECIALIST_MODEL:-?} (specialists), hosted by NVIDIA"
+fi
 probe(){ printf '  %-22s %-34s ' "$1" "$3"; c=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://${STACK_NODE}:$2$3" 2>/dev/null); [ "$c" = "200" ] && echo "UP ($c)" || echo "down ($c)"; }
+[ "${STACK_SELF_HOST_LIGHTNING:-0}" = 1 ] && probe "Lightning NIM" "${STACK_LIGHTNING_PORT:-28000}" /v1/health/ready
 probe "cuOpt"            "${STACK_CUOPT_PORT:-25000}"      /cuopt/health
 probe "cuOpt adapter"    "${STACK_ADAPTER_PORT:-28002}"    /health
 probe "NeMo Guardrails"  "${STACK_GUARDRAILS_PORT:-28003}" /v1/health

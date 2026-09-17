@@ -6,10 +6,10 @@
 #SBATCH --job-name=warehouse-stack
 #SBATCH --partition=hackathon
 #SBATCH --nodes=1
-# Both Nemotron models run on NVIDIA's hosted endpoint, so cuOpt is the only
-# thing left that needs a GPU. The QoS group limit of 4 is shared with the rest
-# of the team, so asking for more than we use blocks everyone.
-#SBATCH --gres=gpu:1
+# Nemotron 3 Ultra runs on NVIDIA's hosted endpoint, but Lightning is served
+# here, so the job needs one GPU for the NIM and one for cuOpt. The QoS group
+# limit of 4 is shared with the rest of the team.
+#SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=32
 # The QoS ceiling is 30-12:00:00 and a running job's limit cannot be raised
 # without admin rights, so the stack is sized for the maximum up front.
@@ -27,7 +27,7 @@ cd "$REPO"
 export PATH="/cm/shared/apps/rootless-docker/bin:$HOME/opt/node/bin:$PATH"
 export DOCKER_HOST=${DOCKER_HOST:-unix:///raid/docker/tmp/xdg_runtime_dir_$(id -u)/docker.sock}
 
-STACK_CONTAINERS="warehouse-guardrails warehouse-cuopt-adapter warehouse-cuopt"
+STACK_CONTAINERS="warehouse-guardrails warehouse-cuopt-adapter warehouse-cuopt warehouse-nim"
 cleanup(){ echo "[stack] shutting down"
   docker rm -f $STACK_CONTAINERS >/dev/null 2>&1
   pkill -f 'services\.openshell\.governor' >/dev/null 2>&1

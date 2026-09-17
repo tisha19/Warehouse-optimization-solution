@@ -75,13 +75,15 @@ if [ -n "$LIVE_NODE" ] && [ "$LIVE_NODE" != "$NODE" ]; then
   NODE="$LIVE_NODE"
 fi
 
-# label:remote-port pairs, in the order they are shown.
+# label:remote-port pairs, in the order they are shown. The Lightning NIM line
+# is empty unless the stack is self-hosting it, and empty lines are skipped.
 SERVICES="
 WarehouseIQ UI:$(get STACK_APP_PORT):28090
 cuOpt solver:$(get STACK_CUOPT_PORT):25000
 cuOpt adapter:$(get STACK_ADAPTER_PORT):28002
 NeMo Guardrails:$(get STACK_GUARDRAILS_PORT):28003
 OpenShell governor:$(get STACK_OPENSHELL_PORT):28004
+$([ "$(get STACK_SELF_HOST_LIGHTNING)" = 1 ] && echo "Lightning NIM:$(get STACK_LIGHTNING_PORT):28000")
 "
 
 FORWARDS=""
