@@ -35,6 +35,50 @@ post_file(){ curl -s -m 180 -X POST "http://${NODE}:$1$2" -H 'Content-Type: appl
 echo "== stack node ${NODE}, model ${MODEL} =="
 
 echo
+echo "specialist model"
+# The specialists delegate through tool calls, so an endpoint that refuses
+# tool_choice=auto breaks every run while every other check here still passes.
+env_get(){ grep -m1 -E "^$1=" .env 2>/dev/null | cut -d= -f2- ; }
+SPEC_BASE=$(env_get NIM_SUBAGENT_BASE_URL)
+SPEC_MODEL=$(env_get NIM_SUBAGENT_MODEL)
+SPEC_KEY=$(env_get NIM_API_KEY)
+[ -n "$SPEC_KEY" ] || SPEC_KEY=$(env_get NIM_SUPERVISOR_API_KEY)
+# A loopback URL is the stack's own NIM, which only resolves on the stack node.
+SPEC_URL=$(printf '%s' "$SPEC_BASE" | sed "s#127\.0\.0\.1#${NODE}#; s#localhost#${NODE}#")
+if [ -z "$SPEC_URL" ] || [ -z "$SPEC_MODEL" ]; then
+  no "tool calling" "NIM_SUBAGENT_BASE_URL / _MODEL missing from .env"
+else
+  tool_body=$(python3 -c 'import json,sys
+print(json.dumps({
+  "model": sys.argv[1],
+  "messages": [{"role": "user", "content": "Solve the slotting problem with at most 30 moves."}],
+  "tools": [{"type": "function", "function": {
+      "name": "solve_slotting",
+      "description": "Run the cuOpt solver for a warehouse slotting problem.",
+      "parameters": {"type": "object", "properties": {"max_moves": {"type": "integer"}}, "required": ["max_moves"]}}}],
+  "tool_choice": "auto",
+  "max_tokens": 512,
+  "temperature": 0.0}))' "$SPEC_MODEL")
+  tool_resp=$(curl -s -m 180 -X POST "${SPEC_URL%/}/chat/completions" \
+    -H 'Content-Type: application/json' -H "Authorization: Bearer ${SPEC_KEY:-local}" -d "$tool_body")
+  calls=$(printf '%s' "$tool_resp" | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("parse-error"); raise SystemExit
+if d.get("error"):
+    print("error: " + str(d["error"].get("message", d["error"]))[:120]); raise SystemExit
+print(len((d.get("choices") or [{}])[0].get("message", {}).get("tool_calls") or []))' 2>/dev/null)
+  case "$calls" in
+    ''|0|error:*|parse-error)
+      no "tool calling" "${calls:-no-response}"
+      printf '        endpoint: %s\n' "${SPEC_URL%/}"
+      printf '        response: %s\n' "$(printf '%s' "$tool_resp" | head -c 300)" ;;
+    *) ok "tool calling -> $calls tool call(s) from ${SPEC_MODEL}" ;;
+  esac
+fi
+
+echo
 echo "guardrails"
 for case in benign malicious; do
   if [ "$case" = benign ]; then

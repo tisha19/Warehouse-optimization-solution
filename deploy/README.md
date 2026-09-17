@@ -5,12 +5,15 @@ WarehouseIQ runs as two halves:
 - **Orchestrator â€” hosted by NVIDIA.** Nemotron 3 Ultra answers at
   `https://inference-api.nvidia.com/v1`. Serving it ourselves would take four
   GPUs, which is the whole team's quota.
-- **Everything else â€” ours, on a DGX-B300 node.** The Nemotron 3.5 Lightning
-  NIM that runs the specialists, cuOpt, the cuOpt slotting adapter, NeMo
-  Guardrails, the OpenShell governor and the WarehouseIQ UI/API.
+- **Specialists — hosted too, for now.** `SELF_HOST_LIGHTNING=1` serves
+  Nemotron 3.5 Lightning on our own B300 and it is much faster there, but that
+  NIM build will not accept `tool_choice=auto`, which the specialists need.
+- **Services — ours, on a DGX-B300 node.** cuOpt, the cuOpt slotting adapter,
+  NeMo Guardrails, the OpenShell governor and the WarehouseIQ UI/API.
 
-The NIM wants a card to itself and cuOpt needs another, so the stack takes
-**two** of the team's four GPUs.
+The NIM wants a card to itself and cuOpt needs another, so with
+`SELF_HOST_LIGHTNING=1` the stack takes **two** of the team's four GPUs.
+Otherwise it takes one, for cuOpt.
 
 ## Start everything
 
@@ -162,9 +165,16 @@ are visible, so a UUID cannot accidentally name someone else's.
 **The FP4 warning from the Lightning NIM is not fatal.** On a B300 it logs
 `Your GPU does not have native support for FP4 computation` and falls back to
 Marlin kernels. It still loads, autotunes and serves; earlier notes here claimed
-the engine core died at that point, which was wrong. What it does need is a card
-to itself â€” it takes roughly 250 GB of the 275 GB â€” so the job asks for two
-GPUs, one for the NIM and one for cuOpt.
+the engine core died at that point, which was wrong. Served locally it is much
+faster than the hosted endpoint — 40 ms to first token against 520 ms, and 385
+against 142 tokens/second.
+
+**What blocks self-hosting is tool calling.** The specialists send
+`tool_choice=auto`, and this NIM answers `"auto" tool choice requires
+--enable-auto-tool-choice and --tool-call-parser to be set` even with
+`NIM_ENABLE_AUTO_TOOL_CHOICE=true` and `NIM_TOOL_CALL_PARSER=nemotron_v3` in the
+container. Both names come from `nimlib`, and nothing in the startup log shows
+the flags reaching vLLM. Until that is resolved the specialists stay hosted.
 
 **The rails must disable thinking.** Nemotron writes its `<think>` reasoning
 into `content`, and the self-check rail reads that prose as its verdict, so

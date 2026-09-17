@@ -69,9 +69,10 @@ WMS / ERP / Forecast APIs
     -> agent evaluation and tracing
 ```
 
-Nemotron 3 Ultra is hosted by NVIDIA at `https://inference-api.nvidia.com/v1`;
-Nemotron 3.5 Lightning runs on our own B300. The stack needs two GPUs, one for
-the NIM and one for cuOpt. The orchestrator runs under the
+Nemotron 3 Ultra is hosted by NVIDIA at `https://inference-api.nvidia.com/v1`,
+and so are the specialists by default; `SELF_HOST_LIGHTNING=1` serves Lightning
+on our own B300 instead. The stack needs one GPU for cuOpt, or two when the NIM
+is self-hosted. The orchestrator runs under the
 deepagents Nemotron harness (13 middleware), which repairs text-shaped tool
 calls and strips stray reasoning tags.
 

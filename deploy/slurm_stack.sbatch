@@ -6,10 +6,11 @@
 #SBATCH --job-name=warehouse-stack
 #SBATCH --partition=hackathon
 #SBATCH --nodes=1
-# Nemotron 3 Ultra runs on NVIDIA's hosted endpoint, but Lightning is served
-# here, so the job needs one GPU for the NIM and one for cuOpt. The QoS group
-# limit of 4 is shared with the rest of the team.
-#SBATCH --gres=gpu:2
+# Both Nemotron models run on NVIDIA's hosted endpoint by default, so cuOpt is
+# the only thing that needs a GPU. Raise this to 2 when SELF_HOST_LIGHTNING=1:
+# the NIM takes roughly 250 GB of a 275 GB card, so it needs one to itself. The
+# QoS group limit of 4 is shared with the rest of the team.
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=32
 # The QoS ceiling is 30-12:00:00 and a running job's limit cannot be raised
 # without admin rights, so the stack is sized for the maximum up front.

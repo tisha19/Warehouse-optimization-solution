@@ -103,9 +103,12 @@ fi
 
 CUOPT_IMAGE=${CUOPT_IMAGE:-nvcr.io/nvidia/cuopt/cuopt:26.8.0-cu13}
 GUARDRAILS_IMAGE=${GUARDRAILS_IMAGE:-nvcr.io/nvidia/nemo-microservices/guardrails:25.12}
-# Lightning is served here rather than by NVIDIA. Set SELF_HOST_LIGHTNING=0 to
-# fall back to the hosted endpoint for both models.
-SELF_HOST_LIGHTNING=${SELF_HOST_LIGHTNING:-1}
+# SELF_HOST_LIGHTNING=1 serves Lightning here instead of using NVIDIA's
+# endpoint. It is off by default because this NIM build rejects
+# tool_choice=auto even with NIM_ENABLE_AUTO_TOOL_CHOICE and
+# NIM_TOOL_CALL_PARSER set, and the specialists cannot work without tool calls.
+# Plain completions and the rails do work against it.
+SELF_HOST_LIGHTNING=${SELF_HOST_LIGHTNING:-0}
 LIGHTNING_IMAGE=${LIGHTNING_IMAGE:-nvcr.io/nim/nvidia/nemotron-3.5-lightning-30b-a3b:latest}
 LIGHTNING_MODEL_ID=${LIGHTNING_MODEL_ID:-nvidia/nemotron-3.5-lightning-30b-a3b}
 LIGHTNING_PORT=${LIGHTNING_PORT:-28000}
@@ -247,6 +250,8 @@ if [ "$SELF_HOST_LIGHTNING" = 1 ]; then
     if docker run -d --name warehouse-nim "${LIGHTNING_GPU_ARGS[@]}" --shm-size=32g \
         -e NGC_API_KEY="$NGC_KEY" -e NIM_TENSOR_PARALLEL_SIZE=1 \
         -e NIM_REASONING_PARSER="${NIM_REASONING_PARSER:-nemotron_v3}" \
+        -e NIM_ENABLE_AUTO_TOOL_CHOICE="${NIM_ENABLE_AUTO_TOOL_CHOICE:-true}" \
+        -e NIM_TOOL_CALL_PARSER="${NIM_TOOL_CALL_PARSER:-nemotron_v3}" \
         ${NIM_MODEL_PROFILE:+-e NIM_MODEL_PROFILE="$NIM_MODEL_PROFILE"} \
         -v "$NIM_CACHE:/opt/nim/.cache" -p ${LIGHTNING_PORT}:8000 "$LIGHTNING_IMAGE" >/dev/null; then
       wait_http "http://127.0.0.1:${LIGHTNING_PORT}/v1/health/ready" 5400 "lightning NIM"

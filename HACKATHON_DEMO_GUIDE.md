@@ -13,10 +13,11 @@ cd ~/gsh-team07/Warehouse-optimization-solution
 ./deploy/stack_status.sh          # node + per-service health, starts nothing
 ```
 
-Six services must report healthy: the Lightning NIM (28000), cuOpt (25000), the
-slotting adapter (28002), NeMo Guardrails (28003), the OpenShell governor
-(28004), and the WarehouseIQ UI (28090). Nemotron 3.5 Lightning runs on our own
-B300; only Nemotron 3 Ultra is hosted by NVIDIA, so the stack needs two GPUs.
+Five services must report healthy: cuOpt (25000), the slotting adapter (28002),
+NeMo Guardrails (28003), the OpenShell governor (28004), and the WarehouseIQ UI
+(28090). Both Nemotron models are hosted by NVIDIA, so the stack needs one GPU.
+With `SELF_HOST_LIGHTNING=1` a sixth service, the Lightning NIM (28000), runs
+locally and the job takes two GPUs.
 
 From your laptop, with your own access key. Leave it running:
 
